@@ -22,15 +22,8 @@ Confidence intervals and historical forecast-error metrics
 
 Project structure
 
-.
-├── app.py               # Streamlit presentation layer
-├── bi.py                # BI agent graph and orchestration
-├── forecasting.py       # Statistical forecasting models
-├── accuracy.py          # Historical backtesting and error metrics
-├── test_accuracy.py     # Accuracy tests
-├── requirements.txt
-├── .env.example
-└── .gitignore
+<img width="1000" height="700" alt="ChatGPT Image Sep 8, 2026, 07_44_32 PM" src="https://github.com/user-attachments/assets/ec6fd2cd-bd5d-4ed0-944f-5a7be0c5d666" />
+
 
 Requirements
 
