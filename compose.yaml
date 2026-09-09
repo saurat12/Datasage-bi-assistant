@@ -1,0 +1,24 @@
+services:
+  datasage:
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    container_name: datasage
+
+    ports:
+      - "8501:8501"
+
+    env_file:
+      - .env.docker
+
+    environment:
+      DB_FILE: /app/data/superstore.db
+
+    volumes:
+      - type: bind
+        source: C:/Users/saura/Downloads/Dump/superstore.db
+        target: /app/data/superstore.db
+        read_only: true
+
+    restart: unless-stopped

@@ -1,0 +1,11 @@
+﻿streamlit
+pandas
+numpy
+python-dotenv
+openai
+langchain
+langchain-core
+langchain-community
+langchain-openai
+langgraph
+statsmodels
