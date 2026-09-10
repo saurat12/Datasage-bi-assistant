@@ -2,6 +2,10 @@ import os
 import re
 import json
 import sqlite3
+import logging
+import time
+import uuid
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Optional, TypedDict, List, Dict, Any, Tuple
 from dotenv import load_dotenv
@@ -10,8 +14,14 @@ from langchain_community.utilities import SQLDatabase
 from langchain_community.agent_toolkits import create_sql_agent
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_openai import ChatOpenAI
+from langchain_community.callbacks.manager import get_openai_callback
 from langgraph.graph import StateGraph, END
 from openai import OpenAI
+from sqlalchemy import create_engine
+from sqlalchemy.pool import NullPool
+
+from config import get_settings
+from sql_safety import apply_row_cap, looks_like_future_filter, split_statements, validate_read_only_sql
 
 from forecasting import (
     ForecastResult,
@@ -23,39 +33,60 @@ from forecasting import (
 from accuracy import AccuracyMetrics, quick_accuracy
 
 load_dotenv()
+settings = get_settings()
+DB_FILE = settings.database_file
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-if not OPENAI_API_KEY:
-    raise RuntimeError("OPENAI_API_KEY is not configured in .env.")
-os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY
+logging.basicConfig(
+    level=getattr(logging, settings.log_level.upper(), logging.INFO),
+    format="%(asctime)s %(levelname)s %(name)s request_id=%(request_id)s %(message)s",
+)
+_request_id: ContextVar[str] = ContextVar("request_id", default="startup")
 
-DB_FILE_VALUE = os.getenv("DB_FILE")
-if not DB_FILE_VALUE:
-    raise RuntimeError("DB_FILE is not configured in .env.")
 
-DB_FILE = Path(DB_FILE_VALUE).expanduser().resolve()
-if not DB_FILE.is_file():
-    raise FileNotFoundError(f"Database file not found: {DB_FILE}")
+class _RequestIdFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.request_id = _request_id.get()
+        return True
 
-DB_URI = f"sqlite:///{DB_FILE.as_posix()}"
 
-db = SQLDatabase.from_uri(DB_URI)
-print("Tables:", db.get_usable_table_names())
-print("\nSchema:\n", db.get_table_info())
-print("\nRow Count:", db.run("SELECT COUNT(*) FROM orders"))
+logger = logging.getLogger("datasage")
+for handler in logging.getLogger().handlers:
+    handler.addFilter(_RequestIdFilter())
+
+
+def _readonly_connection():
+    conn = sqlite3.connect(
+        f"file:{DB_FILE.as_posix()}?mode=ro",
+        uri=True,
+        timeout=settings.sqlite_timeout_seconds,
+    )
+    conn.execute("PRAGMA query_only = ON")
+    conn.execute(f"PRAGMA busy_timeout = {int(settings.sqlite_timeout_seconds * 1000)}")
+    return conn
+
+
+engine = create_engine("sqlite://", creator=_readonly_connection, poolclass=NullPool)
+db = SQLDatabase(engine)
+logger.info("Database initialized with tables=%s", db.get_usable_table_names())
 
 # Separate model handles per agent role. Same underlying model here, but this
 # is where you'd swap in a cheaper/faster model for the critic, or a more
 # careful one for the summary, without touching the SQL agent.
-sql_llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
-critic_llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
-summary_llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
-orchestrator_llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
-forecast_llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
-_viz_client = OpenAI()
+_llm_options = dict(
+    model=settings.openai_model,
+    temperature=0,
+    timeout=settings.request_timeout_seconds,
+    max_retries=settings.openai_max_retries,
+)
+sql_llm = ChatOpenAI(**_llm_options)
+critic_llm = ChatOpenAI(**_llm_options)
+summary_llm = ChatOpenAI(**_llm_options)
+orchestrator_llm = ChatOpenAI(**_llm_options)
+forecast_llm = ChatOpenAI(**_llm_options)
+_viz_client = OpenAI(timeout=settings.request_timeout_seconds, max_retries=settings.openai_max_retries)
 
-MAX_RETRIES = 2
-MAX_FORECAST_RETRIES = 1
+MAX_RETRIES = settings.max_sql_retries
+MAX_FORECAST_RETRIES = settings.max_forecast_retries
 
 # ---------------------------------------------------------------------------
 # SQL Agent prompts — this agent's ONLY job now is: write correct SQL, run it.
@@ -326,7 +357,7 @@ def _llm_interpret_horizon(question: str) -> dict:
         raw = re.sub(r"```json|```", "", resp.content.strip()).strip()
         return json.loads(raw)
     except Exception as e:
-        print("[forecast_agent] horizon LLM interpretation failed:", e)
+        logger.exception("Forecast horizon interpretation failed")
         return {"mode": "default"}
 
 
@@ -350,7 +381,7 @@ def extract_sql(output: str) -> Optional[str]:
 
 
 def _downsample_for_chart(
-    data: List[Dict[str, Any]], max_rows: int = 500
+    data: List[Dict[str, Any]], max_rows: int = settings.chart_sample_rows
 ) -> tuple[List[Dict[str, Any]], bool]:
     """Forecast queries return full, unfiltered history (by design, no
     LIMIT). Grouped forecasts especially can produce thousands of rows,
@@ -362,6 +393,15 @@ def _downsample_for_chart(
     step = len(data) / max_rows
     indices = sorted({int(i * step) for i in range(max_rows)})
     return [data[i] for i in indices], True
+
+
+def _safe_rows_for_llm(rows: List[Dict[str, Any]], max_rows: int) -> List[Dict[str, Any]]:
+    """Remove non-allowlisted fields before records leave the application."""
+    allowed = settings.llm_column_allowlist
+    selected = rows[:max_rows]
+    if not allowed:
+        return selected
+    return [{key: value for key, value in row.items() if key in allowed} for row in selected]
 
 
 def generate_chart_spec(
@@ -383,10 +423,12 @@ def generate_chart_spec(
     disappearing into a None.
     """
     if not data:
-        print("CHART DEBUG: data is empty")
+        logger.info("Chart skipped because result set is empty")
         return None, "No rows were returned, so there's nothing to chart."
 
-    chart_data, was_downsampled = _downsample_for_chart(data)
+    chart_data, was_downsampled = _downsample_for_chart(
+        _safe_rows_for_llm(data, settings.chart_sample_rows)
+    )
     columns = list(chart_data[0].keys())
     strict_note = ""
     if _retry:
@@ -465,7 +507,7 @@ Full data: {json.dumps(chart_data)}"""
         if missing:
             raise ValueError(f"spec missing required keys: {missing}")
 
-        print("[viz_agent] spec keys:", list(spec.keys()))
+        logger.info("Visualization generated keys=%s", list(spec.keys()))
         success_note = (
             f"Chart shows a sample of {len(chart_data)} of {len(data)} rows "
             "for readability."
@@ -473,29 +515,15 @@ Full data: {json.dumps(chart_data)}"""
         return spec, success_note
 
     except Exception as e:
-        print("[viz_agent] error:", e)
+        logger.warning("Visualization generation failed: %s", e)
         if not _retry:
-            print("[viz_agent] retrying once with stricter instructions")
+            logger.info("Retrying visualization generation")
             return generate_chart_spec(data, question=question, _retry=True)
         return None, f"Chart generation failed after retry: {e}"
 
 
 def _looks_like_future_filter(sql: str) -> bool:
-    """Heuristic: does this SQL try to filter to future / recent dates?"""
-    if not sql:
-        return False
-    s = sql.lower()
-    bad_patterns = [
-        "date('now')",
-        "datetime('now')",
-        "current_date",
-        "current_timestamp",
-    ]
-    if any(p in s for p in bad_patterns):
-        return True
-    if re.search(r"where[^;]*order_date\s*(>|>=)\s*", s):
-        return True
-    return False
+    return looks_like_future_filter(sql)
 
 
 _GROUP_KEYWORDS: List[tuple] = [
@@ -541,26 +569,7 @@ def _build_forecast_sql(group_col: Optional[str]) -> str:
 
 
 def _split_statements(sql: str) -> List[str]:
-    """Split on ';' while respecting quoted strings, so we don't break on a
-    semicolon that's part of a literal."""
-    statements = []
-    current = []
-    in_single = False
-    in_double = False
-    for ch in sql:
-        if ch == "'" and not in_double:
-            in_single = not in_single
-        elif ch == '"' and not in_single:
-            in_double = not in_double
-        if ch == ";" and not in_single and not in_double:
-            statements.append("".join(current))
-            current = []
-        else:
-            current.append(ch)
-    tail = "".join(current).strip()
-    if tail:
-        statements.append(tail)
-    return [s.strip() for s in statements if s.strip()]
+    return split_statements(sql)
 
 
 def _sanitize_single_statement(sql: Optional[str]) -> Optional[str]:
@@ -576,18 +585,17 @@ def _sanitize_single_statement(sql: Optional[str]) -> Optional[str]:
     if len(statements) == 1:
         return statements[0].rstrip(";").strip() + ";"
 
-    print(f"[executor] WARNING: {len(statements)} statements detected in SQL, "
-          "selecting the best candidate instead of executing all of them.")
-    candidates = [s for s in statements if re.match(r"^\s*(select|with)\b", s, re.IGNORECASE)]
-    chosen = candidates[-1] if candidates else statements[-1]
-    return chosen.rstrip(";").strip() + ";"
+    raise ValueError("Exactly one SQL statement is allowed.")
 
 
-def _run_sql(sql: str) -> List[Dict[str, Any]]:
-    conn = sqlite3.connect(str(DB_FILE))
+def _run_sql(sql: str, forecast: bool = False) -> List[Dict[str, Any]]:
+    executable_sql = validate_read_only_sql(sql)
+    if not forecast:
+        executable_sql = apply_row_cap(executable_sql, settings.sql_row_limit)
+    conn = _readonly_connection()
     try:
         conn.row_factory = sqlite3.Row
-        cursor = conn.execute(sql)
+        cursor = conn.execute(executable_sql)
         return [dict(r) for r in cursor.fetchall()]
     finally:
         conn.close()
@@ -600,7 +608,6 @@ def _run_sql(sql: str) -> List[Dict[str, Any]]:
 class BIState(TypedDict, total=False):
     question: str
     forecast: bool                       # SINGLE source of truth for intent
-    forecast_override: Optional[bool]    # explicit user toggle, if set
     group_col: Optional[str]
     sql: Optional[str]
     critic_approved: bool
@@ -630,35 +637,21 @@ def orchestrator_node(state: BIState) -> BIState:
     executor -> forecast_agent branch) reads this flag rather than
     re-deciding intent independently."""
     question = state["question"]
-    manual_override = state.get("forecast_override")
-
-    if manual_override is not None:
-        forecast = bool(manual_override)
-        print(f"[orchestrator] forecast={forecast} (manual override)")
-    else:
-        # Fast, free, deterministic path first — handles the vast majority
-        # of clearly-phrased forecast questions ("forecast", "next N months",
-        # "predict", etc.) with zero LLM cost.
-        forecast = detect_forecast_intent(question)
-        print(f"[orchestrator] forecast={forecast} (keyword detection)")
-
-        # Only escalate to an LLM tiebreak when the deterministic signal is
-        # negative but the phrasing still smells future-oriented — keeps the
-        # extra call rare rather than paid on every single question.
-        if not forecast and _AMBIGUOUS_FUTURE_HINTS.search(question or ""):
-            try:
-                resp = orchestrator_llm.invoke([
-                    ("system", ORCHESTRATOR_INTENT_PROMPT),
-                    ("human", question),
-                ])
-                forecast = resp.content.strip().lower().startswith("true")
-                print(f"[orchestrator] forecast={forecast} (LLM tiebreak)")
-            except Exception as e:
-                print("[orchestrator] LLM tiebreak failed, defaulting to False:", e)
-                forecast = False
+    forecast = detect_forecast_intent(question)
+    logger.info("Forecast keyword detection result=%s", forecast)
+    if not forecast and _AMBIGUOUS_FUTURE_HINTS.search(question or ""):
+        try:
+            resp = orchestrator_llm.invoke([
+                ("system", ORCHESTRATOR_INTENT_PROMPT),
+                ("human", question),
+            ])
+            forecast = resp.content.strip().lower().startswith("true")
+        except Exception:
+            logger.exception("Forecast intent tiebreak failed")
+            forecast = False
 
     group_col = _detect_group_dimension(question) if forecast else None
-    print(f"[orchestrator] final forecast={forecast} group_col={group_col}")
+    logger.info("Forecast routing result=%s group=%s", forecast, group_col)
     return {**state, "forecast": forecast, "group_col": group_col, "retry_count": 0}
 
 
@@ -681,16 +674,16 @@ def sql_agent_node(state: BIState) -> BIState:
             f"still answering the original question."
         )
 
-    print(f"[sql_agent] attempt {retry_count + 1} | forecast={forecast}")
+    logger.info("SQL agent attempt=%d forecast=%s", retry_count + 1, forecast)
     try:
         response = agent.invoke({"input": agent_input})
         output = response["output"]
     except Exception as e:
-        print("[sql_agent] agent invocation failed:", e)
+        logger.exception("SQL agent invocation failed")
         return {**state, "sql": None, "error": str(e)}
 
     sql = extract_sql(output)
-    print("[sql_agent] extracted SQL:", repr(sql))
+    logger.debug("SQL generated=%r", sql)
     return {**state, "sql": sql}
 
 
@@ -746,7 +739,7 @@ def critic_node(state: BIState) -> BIState:
         raw = re.sub(r"```json|```", "", resp.content.strip()).strip()
         verdict = json.loads(raw)
     except Exception as e:
-        print("[critic] LLM review failed, using deterministic checks only:", e)
+        logger.warning("LLM critic failed; deterministic checks used: %s", e)
         verdict = {
             "approved": len(det_issues) == 0,
             "reason": "; ".join(det_issues) or "Deterministic checks passed.",
@@ -754,7 +747,7 @@ def critic_node(state: BIState) -> BIState:
         }
 
     approved = bool(verdict.get("approved")) and not det_issues
-    print(f"[critic] approved={approved} reason={verdict.get('reason')}")
+    logger.info("SQL critic approved=%s reason=%s", approved, verdict.get("reason"))
 
     return {
         **state,
@@ -773,12 +766,12 @@ def fallback_node(state: BIState) -> BIState:
 
     if forecast:
         sql = _build_forecast_sql(group_col)
-        print("[fallback] using canonical historical forecast query")
+        logger.warning("Using canonical historical forecast query")
     else:
         sql = state.get("sql") or "SELECT * FROM orders LIMIT 100;"
         if "limit" not in sql.lower():
             sql = sql.rstrip(";") + " LIMIT 100;"
-        print("[fallback] using best-effort SQL with LIMIT safety net")
+        logger.warning("Using best-effort SQL fallback")
 
     return {
         **state,
@@ -793,13 +786,13 @@ def executor_node(state: BIState) -> BIState:
     if not sql:
         return {**state, "sql": None, "rows": [], "error": "No valid SQL statement to execute."}
     try:
-        rows = _run_sql(sql)
-        print("[executor] row count:", len(rows))
+        rows = _run_sql(sql, forecast=state.get("forecast", False))
+        logger.info("SQL execution completed rows=%d", len(rows))
         # Persist the sanitized version so the SQL shown downstream (and
         # returned to the caller) matches what actually ran.
         return {**state, "sql": sql, "rows": rows, "error": None}
     except Exception as e:
-        print("[executor] SQL execution failed:", e)
+        logger.exception("SQL execution failed")
         return {**state, "sql": sql, "rows": [], "error": str(e)}
 
 
@@ -948,7 +941,7 @@ def forecast_agent_node(state: BIState) -> BIState:
         return {**state, "forecast_error": "No data available to forecast on."}
 
     if not rows:
-        print("[forecast_agent] no rows returned by SQL agent")
+        logger.info("Forecast skipped because SQL returned no rows")
         return {
             **state,
             "forecast_error": "No historical data was returned to forecast on.",
@@ -965,7 +958,7 @@ def forecast_agent_node(state: BIState) -> BIState:
     # tried and failed (retry_count > 0) AND there's no clear target window.
     if target is None and retry_count > 0:
         interpretation = _llm_interpret_horizon(question)
-        print("[forecast_agent] LLM horizon interpretation:", interpretation)
+        logger.info("Forecast horizon interpretation=%s", interpretation)
         if interpretation.get("mode") == "relative" and interpretation.get("periods"):
             periods = interpretation["periods"]
             horizon_label = f"next {periods} {interpretation.get('unit', unit)}"
@@ -976,14 +969,14 @@ def forecast_agent_node(state: BIState) -> BIState:
         else:
             result = forecast_series(df, periods=periods, horizon_label=horizon_label)
     except ValueError as e:
-        print("[forecast_agent] forecast_series failed:", e)
+        logger.warning("Forecast generation rejected input: %s", e)
         return {
             **state,
             "forecast_error": str(e),
             "forecast_retry_count": retry_count + 1,
         }
     except Exception as e:
-        print("[forecast_agent] unexpected forecasting failure:", e)
+        logger.exception("Unexpected forecast generation failure")
         return {
             **state,
             "forecast_error": f"Forecasting failed unexpectedly: {e}",
@@ -1010,11 +1003,11 @@ def forecast_agent_node(state: BIState) -> BIState:
                         "— treat that lower bound as not practically meaningful."
                     )
     except Exception as e:
-        print("[forecast_agent] validation check skipped due to error:", e)
+        logger.warning("Forecast validation check skipped: %s", e)
 
     result.meta["warnings"] = warnings
     forecast_chart_spec = _build_forecast_chart_spec(result)
-    print(f"[forecast_agent] success | method={result.method} warnings={warnings}")
+    logger.info("Forecast succeeded method=%s warnings=%s", result.method, warnings)
     return {
         **state,
         "forecast_result": result,
@@ -1059,14 +1052,16 @@ def accuracy_agent_node(state: BIState) -> BIState:
         metrics = quick_accuracy(accuracy_df, horizon=3)
         if metrics is not None:
             result.meta["accuracy"] = metrics
-            print(
-                f"[accuracy_agent] mape={metrics.mape:.1f}% "
-                f"splits={metrics.n_splits} points={metrics.n_points}"
+            logger.info(
+                "Forecast backtest mape=%.1f splits=%d points=%d",
+                metrics.mape,
+                metrics.n_splits,
+                metrics.n_points,
             )
     except Exception as e:
         # Accuracy is supplementary; a scoring failure must not discard a
         # successfully generated forecast.
-        print("[accuracy_agent] scoring skipped:", e)
+        logger.warning("Forecast backtest skipped: %s", e)
 
     return {**state, "forecast_result": result}
 
@@ -1086,7 +1081,7 @@ def summary_node(state: BIState) -> BIState:
     summary_input: Dict[str, Any] = {
         "question": question,
         "row_count": len(rows),
-        "sample_rows": rows[:15],
+        "sample_rows": _safe_rows_for_llm(rows, settings.summary_sample_rows),
     }
 
     if state.get("forecast", False) and forecast_result is not None:
@@ -1122,7 +1117,7 @@ def summary_node(state: BIState) -> BIState:
         ])
         summary = resp.content.strip().replace("$", r"\$")
     except Exception as e:
-        print("[summary_agent] failed:", e)
+        logger.exception("Summary generation failed")
         summary = f"Retrieved {len(rows)} rows for: {question}"
 
     return {**state, "summary": summary}
@@ -1148,7 +1143,7 @@ def route_after_critic(state: BIState) -> str:
     if state.get("critic_approved"):
         return "proceed"
     if state.get("retry_count", 0) >= MAX_RETRIES:
-        print("[router] retries exhausted -> falling back to canonical query")
+        logger.warning("SQL retries exhausted; routing to fallback")
         return "fallback"
     return "retry"
 
@@ -1235,7 +1230,10 @@ _compiled_graph = _build_graph()
 # Main entry point
 # ---------------------------------------------------------------------------
 
-def ask_bi_agent(question: str, forecast: Optional[bool] = None) -> dict:
+_response_cache: Dict[str, Tuple[float, dict]] = {}
+
+
+def ask_bi_agent(question: str) -> dict:
     """
     Run the multi-agent BI pipeline on a question.
 
@@ -1246,10 +1244,6 @@ def ask_bi_agent(question: str, forecast: Optional[bool] = None) -> dict:
     Parameters
     ----------
     question : the user's natural-language question.
-    forecast : explicit override (e.g. from a UI checkbox). True forces
-               forecast mode, False forces it off, None (default) lets the
-               orchestrator decide from the question itself.
-
     Returns
     -------
     dict with keys:
@@ -1263,11 +1257,25 @@ def ask_bi_agent(question: str, forecast: Optional[bool] = None) -> dict:
         forecast_error      : str | None
     """
     try:
-        initial_state: BIState = {
-            "question": question,
-            "forecast_override": forecast,
-        }
-        final_state = _compiled_graph.invoke(initial_state)
+        normalized_question = " ".join(question.lower().split())
+        cached = _response_cache.get(normalized_question)
+        if cached and time.monotonic() - cached[0] < settings.cache_ttl_seconds:
+            logger.info("Returning cached response")
+            return cached[1]
+
+        token = _request_id.set(str(uuid.uuid4()))
+        try:
+            with get_openai_callback() as usage:
+                final_state = _compiled_graph.invoke({"question": question})
+            logger.info(
+                "LLM usage prompt_tokens=%s completion_tokens=%s total_tokens=%s cost_usd=%s",
+                usage.prompt_tokens,
+                usage.completion_tokens,
+                usage.total_tokens,
+                usage.total_cost,
+            )
+        finally:
+            _request_id.reset(token)
         forecast_result = final_state.get("forecast_result")
 
         forecast_payload = None
@@ -1299,7 +1307,7 @@ def ask_bi_agent(question: str, forecast: Optional[bool] = None) -> dict:
                 "meta": meta,
             }
 
-        return {
+        response = {
             "summary": final_state.get("summary"),
             "sql": final_state.get("sql"),
             "chart_spec": final_state.get("chart_spec"),
@@ -1309,10 +1317,13 @@ def ask_bi_agent(question: str, forecast: Optional[bool] = None) -> dict:
             "forecast": forecast_payload,
             "forecast_error": final_state.get("forecast_error"),
         }
+        _response_cache[normalized_question] = (time.monotonic(), response)
+        return response
 
-    except Exception as e:
+    except Exception:
+        logger.exception("BI request failed")
         return {
-            "summary": f"⚠️ Agent error: {e}",
+            "summary": "The assistant is temporarily unavailable. Please try again shortly.",
             "sql": None,
             "chart_spec": None,
             "chart_note": None,

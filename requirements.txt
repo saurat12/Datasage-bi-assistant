@@ -9,3 +9,6 @@ langchain-community
 langchain-openai
 langgraph
 statsmodels
+pytest
+pydantic-settings
+sqlalchemy

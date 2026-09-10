@@ -11,7 +11,7 @@ COPY requirements.txt .
 RUN pip install --upgrade pip \
     && pip install -r requirements.txt
 
-COPY app.py bi.py forecasting.py accuracy.py ./
+COPY app.py bi.py forecasting.py accuracy.py config.py sql_safety.py ./
 
 EXPOSE 8501
 

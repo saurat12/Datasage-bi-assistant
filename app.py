@@ -1,6 +1,13 @@
+import hmac
+import logging
+
 import streamlit as st
 
 from bi import ask_bi_agent
+from config import get_settings
+
+logger = logging.getLogger("datasage.app")
+settings = get_settings()
 
 st.set_page_config(
     page_title="DataSage",
@@ -192,35 +199,6 @@ html, body, [class*="css"] {
     box-shadow: 0 0 0 4px rgba(245,185,66,0.08), 0 18px 50px rgba(0,0,0,0.35) !important;
 }
 
-/* Forecast control row, sits just above the chat input */
-.forecast-control {
-    position: fixed;
-    left: 50%;
-    bottom: 5.6rem;
-    transform: translateX(-50%);
-    width: min(980px, calc(100% - 2rem));
-    z-index: 25;
-    display: flex;
-    justify-content: flex-end;
-    pointer-events: none;
-}
-.forecast-control > div {
-    background: rgba(12,18,32,0.78);
-    border: 1px solid rgba(245,185,66,0.22);
-    backdrop-filter: blur(14px);
-    border-radius: 999px;
-    padding: 0.25rem 0.85rem;
-    pointer-events: auto;
-    box-shadow: 0 10px 28px rgba(0,0,0,0.3);
-}
-.forecast-control [data-testid="stCheckbox"] label {
-    color: #f8d27b !important;
-    font-size: 0.82rem !important;
-    font-weight: 600 !important;
-    letter-spacing: 0.02em;
-}
-.forecast-control [data-testid="stCheckbox"] label p { color: #f8d27b !important; }
-
 .forecast-pill {
     display: inline-flex;
     align-items: center;
@@ -247,7 +225,6 @@ html, body, [class*="css"] {
     .datasage-title { font-size: 1.65rem; }
     .datasage-caption { font-size: 0.84rem; }
     [data-testid="stChatMessageContent"] { padding: 0.9rem 0.95rem !important; border-radius: 16px !important; }
-    .forecast-control { bottom: 5.2rem; }
 }
 </style>
 
@@ -276,8 +253,29 @@ def render_chart(spec: dict):
         with col2:
             st.vega_lite_chart(spec, use_container_width=True)
     except Exception as e:
-        print("RENDER ERROR:", e)
-        st.warning(f"Could not render chart: {e}")
+        logger.exception("Chart rendering failed")
+        st.warning("The result was generated, but its chart could not be displayed.")
+
+
+def require_authentication() -> None:
+    if not settings.auth_required:
+        return
+    if not settings.app_password:
+        st.error("Authentication is enabled but no application password is configured.")
+        st.stop()
+    if st.session_state.get("authenticated"):
+        return
+    password = st.text_input("Application password", type="password")
+    if st.button("Sign in"):
+        st.session_state.authenticated = hmac.compare_digest(password, settings.app_password)
+        if not st.session_state.authenticated:
+            st.error("Incorrect password.")
+        else:
+            st.rerun()
+    st.stop()
+
+
+require_authentication()
 
 
 # ---------------------------------------------------------------------------
