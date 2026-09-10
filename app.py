@@ -3,18 +3,27 @@ import logging
 
 import streamlit as st
 
-from bi import ask_bi_agent
-from config import get_settings
-
-logger = logging.getLogger("datasage.app")
-settings = get_settings()
-
 st.set_page_config(
     page_title="DataSage",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
+
+logger = logging.getLogger("datasage.app")
+
+try:
+    from config import get_settings
+    from bi import ask_bi_agent
+
+    settings = get_settings()
+except Exception:
+    logger.exception("DataSage startup failed")
+    st.error(
+        "DataSage could not start because its configuration is incomplete "
+        "or invalid. Check the container logs and deployment settings."
+    )
+    st.stop()
 
 st.markdown("""
 <style>
@@ -260,14 +269,15 @@ def render_chart(spec: dict):
 def require_authentication() -> None:
     if not settings.auth_required:
         return
-    if not settings.app_password:
+    expected_password = settings.app_password.get_secret_value()
+    if not expected_password:
         st.error("Authentication is enabled but no application password is configured.")
         st.stop()
     if st.session_state.get("authenticated"):
         return
     password = st.text_input("Application password", type="password")
     if st.button("Sign in"):
-        st.session_state.authenticated = hmac.compare_digest(password, settings.app_password)
+        st.session_state.authenticated = hmac.compare_digest(password, expected_password)
         if not st.session_state.authenticated:
             st.error("Incorrect password.")
         else:
@@ -296,12 +306,13 @@ for msg in st.session_state.messages:
         if msg.get("sql") and not msg.get("forecast_used"):
             with st.expander("SQL Query"):
                 st.code(msg["sql"], language="sql")
+        if msg.get("rows") and not msg.get("forecast_used"):
+            with st.expander("Data"):
+                st.dataframe(msg["rows"], use_container_width=True)
         if msg.get("chart_spec"):
             render_chart(msg["chart_spec"])
         if msg.get("forecast_chart"):
             render_chart(msg["forecast_chart"])
-        if msg.get("forecast_accuracy"):
-            st.caption(f"📏 {msg['forecast_accuracy']}")
 
 
 # ---------------------------------------------------------------------------
@@ -332,6 +343,10 @@ if question:
             with st.expander("SQL Query"):
                 st.code(result["sql"], language="sql")
 
+        if result.get("rows") and not forecast_used:
+            with st.expander("Data"):
+                st.dataframe(result["rows"], use_container_width=True)
+
         # Forecast responses have their own combined history + forecast chart.
         if result.get("chart_spec") and not forecast_used:
             render_chart(result["chart_spec"])
@@ -340,9 +355,6 @@ if question:
             st.markdown("---")
             if forecast.get("chart_spec"):
                 render_chart(forecast["chart_spec"])
-            accuracy = forecast.get("meta", {}).get("accuracy")
-            if accuracy is not None:
-                st.caption(f"📏 {accuracy['summary']}")
         elif forecast_error:
             st.markdown("---")
             st.markdown(forecast_error)
@@ -352,12 +364,9 @@ if question:
         "content": result["summary"],
         "sql": result.get("sql"),
         "chart_spec": result.get("chart_spec"),
+        "rows": result.get("rows"),
         "forecast_used": forecast_used,
         "forecast_chart": forecast.get("chart_spec") if forecast else None,
-        "forecast_accuracy": (
-            forecast.get("meta", {}).get("accuracy", {}).get("summary")
-            if forecast else None
-        ),
     })
 
 st.markdown("</div></div>", unsafe_allow_html=True)

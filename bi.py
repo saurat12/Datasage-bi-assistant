@@ -35,6 +35,8 @@ from accuracy import AccuracyMetrics, quick_accuracy
 load_dotenv()
 settings = get_settings()
 DB_FILE = settings.database_file
+OPENAI_API_KEY = settings.openai_api_key.get_secret_value()
+os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY
 
 logging.basicConfig(
     level=getattr(logging, settings.log_level.upper(), logging.INFO),
@@ -75,6 +77,7 @@ logger.info("Database initialized with tables=%s", db.get_usable_table_names())
 _llm_options = dict(
     model=settings.openai_model,
     temperature=0,
+    api_key=OPENAI_API_KEY,
     timeout=settings.request_timeout_seconds,
     max_retries=settings.openai_max_retries,
 )
@@ -83,7 +86,11 @@ critic_llm = ChatOpenAI(**_llm_options)
 summary_llm = ChatOpenAI(**_llm_options)
 orchestrator_llm = ChatOpenAI(**_llm_options)
 forecast_llm = ChatOpenAI(**_llm_options)
-_viz_client = OpenAI(timeout=settings.request_timeout_seconds, max_retries=settings.openai_max_retries)
+_viz_client = OpenAI(
+    api_key=OPENAI_API_KEY,
+    timeout=settings.request_timeout_seconds,
+    max_retries=settings.openai_max_retries,
+)
 
 MAX_RETRIES = settings.max_sql_retries
 MAX_FORECAST_RETRIES = settings.max_forecast_retries
