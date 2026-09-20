@@ -5,6 +5,7 @@ on:
     branches:
       - docker-deployment
       - main
+      - eval-updates
   pull_request:
     branches:
       - main
