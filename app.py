@@ -1,6 +1,7 @@
-import streamlit as st
+import hmac
+import logging
 
-from bi import ask_bi_agent
+import streamlit as st
 
 st.set_page_config(
     page_title="DataSage",
@@ -8,6 +9,21 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="collapsed"
 )
+
+logger = logging.getLogger("datasage.app")
+
+try:
+    from config import get_settings
+    from bi import ask_bi_agent
+
+    settings = get_settings()
+except Exception:
+    logger.exception("DataSage startup failed")
+    st.error(
+        "DataSage could not start because its configuration is incomplete "
+        "or invalid. Check the container logs and deployment settings."
+    )
+    st.stop()
 
 st.markdown("""
 <style>
@@ -192,35 +208,6 @@ html, body, [class*="css"] {
     box-shadow: 0 0 0 4px rgba(245,185,66,0.08), 0 18px 50px rgba(0,0,0,0.35) !important;
 }
 
-/* Forecast control row, sits just above the chat input */
-.forecast-control {
-    position: fixed;
-    left: 50%;
-    bottom: 5.6rem;
-    transform: translateX(-50%);
-    width: min(980px, calc(100% - 2rem));
-    z-index: 25;
-    display: flex;
-    justify-content: flex-end;
-    pointer-events: none;
-}
-.forecast-control > div {
-    background: rgba(12,18,32,0.78);
-    border: 1px solid rgba(245,185,66,0.22);
-    backdrop-filter: blur(14px);
-    border-radius: 999px;
-    padding: 0.25rem 0.85rem;
-    pointer-events: auto;
-    box-shadow: 0 10px 28px rgba(0,0,0,0.3);
-}
-.forecast-control [data-testid="stCheckbox"] label {
-    color: #f8d27b !important;
-    font-size: 0.82rem !important;
-    font-weight: 600 !important;
-    letter-spacing: 0.02em;
-}
-.forecast-control [data-testid="stCheckbox"] label p { color: #f8d27b !important; }
-
 .forecast-pill {
     display: inline-flex;
     align-items: center;
@@ -247,7 +234,6 @@ html, body, [class*="css"] {
     .datasage-title { font-size: 1.65rem; }
     .datasage-caption { font-size: 0.84rem; }
     [data-testid="stChatMessageContent"] { padding: 0.9rem 0.95rem !important; border-radius: 16px !important; }
-    .forecast-control { bottom: 5.2rem; }
 }
 </style>
 
@@ -276,8 +262,30 @@ def render_chart(spec: dict):
         with col2:
             st.vega_lite_chart(spec, use_container_width=True)
     except Exception as e:
-        print("RENDER ERROR:", e)
-        st.warning(f"Could not render chart: {e}")
+        logger.exception("Chart rendering failed")
+        st.warning("The result was generated, but its chart could not be displayed.")
+
+
+def require_authentication() -> None:
+    if not settings.auth_required:
+        return
+    expected_password = settings.app_password.get_secret_value()
+    if not expected_password:
+        st.error("Authentication is enabled but no application password is configured.")
+        st.stop()
+    if st.session_state.get("authenticated"):
+        return
+    password = st.text_input("Application password", type="password")
+    if st.button("Sign in"):
+        st.session_state.authenticated = hmac.compare_digest(password, expected_password)
+        if not st.session_state.authenticated:
+            st.error("Incorrect password.")
+        else:
+            st.rerun()
+    st.stop()
+
+
+require_authentication()
 
 
 # ---------------------------------------------------------------------------
@@ -298,12 +306,16 @@ for msg in st.session_state.messages:
         if msg.get("sql") and not msg.get("forecast_used"):
             with st.expander("SQL Query"):
                 st.code(msg["sql"], language="sql")
+        if msg.get("rows") and not msg.get("forecast_used"):
+            with st.expander("Data", expanded=msg.get("evaluation_status") == "data_only"):
+                st.dataframe(msg["rows"], use_container_width=True)
         if msg.get("chart_spec"):
             render_chart(msg["chart_spec"])
         if msg.get("forecast_chart"):
             render_chart(msg["forecast_chart"])
-        if msg.get("forecast_accuracy"):
-            st.caption(f"📏 {msg['forecast_accuracy']}")
+        if msg.get("forecast_rows"):
+            with st.expander("Forecast values"):
+                st.dataframe(msg["forecast_rows"], use_container_width=True)
 
 
 # ---------------------------------------------------------------------------
@@ -334,6 +346,10 @@ if question:
             with st.expander("SQL Query"):
                 st.code(result["sql"], language="sql")
 
+        if result.get("rows") and not forecast_used:
+            with st.expander("Data", expanded=result.get("evaluation", {}).get("status") == "data_only"):
+                st.dataframe(result["rows"], use_container_width=True)
+
         # Forecast responses have their own combined history + forecast chart.
         if result.get("chart_spec") and not forecast_used:
             render_chart(result["chart_spec"])
@@ -342,9 +358,9 @@ if question:
             st.markdown("---")
             if forecast.get("chart_spec"):
                 render_chart(forecast["chart_spec"])
-            accuracy = forecast.get("meta", {}).get("accuracy")
-            if accuracy is not None:
-                st.caption(f"📏 {accuracy['summary']}")
+            if forecast.get("rows"):
+                with st.expander("Forecast values", expanded=True):
+                    st.dataframe(forecast["rows"], use_container_width=True)
         elif forecast_error:
             st.markdown("---")
             st.markdown(forecast_error)
@@ -354,12 +370,11 @@ if question:
         "content": result["summary"],
         "sql": result.get("sql"),
         "chart_spec": result.get("chart_spec"),
+        "rows": result.get("rows"),
+        "evaluation_status": result.get("evaluation", {}).get("status"),
         "forecast_used": forecast_used,
         "forecast_chart": forecast.get("chart_spec") if forecast else None,
-        "forecast_accuracy": (
-            forecast.get("meta", {}).get("accuracy", {}).get("summary")
-            if forecast else None
-        ),
+        "forecast_rows": forecast.get("rows") if forecast else None,
     })
 
 st.markdown("</div></div>", unsafe_allow_html=True)

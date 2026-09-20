@@ -1,0 +1,129 @@
+{
+  "fixture": [
+    {
+      "order_date": "2024-01-01",
+      "region": "East",
+      "total_sales": 100.0
+    },
+    {
+      "order_date": "2024-01-02",
+      "region": "West",
+      "total_sales": 50.0
+    },
+    {
+      "order_date": "2024-02-01",
+      "region": "East",
+      "total_sales": 200.0
+    },
+    {
+      "order_date": "2024-02-02",
+      "region": "West",
+      "total_sales": 75.0
+    }
+  ],
+  "cases": [
+    {
+      "id": "total",
+      "question": "What is total sales revenue?",
+      "sql": "SELECT SUM(total_sales) AS total_sales FROM orders",
+      "expected": [
+        [
+          425.0
+        ]
+      ]
+    },
+    {
+      "id": "regional",
+      "question": "Show total sales by region, ordered by revenue descending.",
+      "sql": "SELECT region, SUM(total_sales) AS total_sales FROM orders GROUP BY region ORDER BY total_sales DESC",
+      "expected": [
+        [
+          "East",
+          300.0
+        ],
+        [
+          "West",
+          125.0
+        ]
+      ]
+    },
+    {
+      "id": "monthly",
+      "question": "Show monthly total sales, oldest month first.",
+      "sql": "SELECT strftime('%Y-%m', order_date) AS period, SUM(total_sales) AS total_sales FROM orders GROUP BY period ORDER BY period",
+      "expected": [
+        [
+          "2024-01",
+          150.0
+        ],
+        [
+          "2024-02",
+          275.0
+        ]
+      ]
+    },
+    {
+      "id": "filter",
+      "question": "What are total sales in the East region?",
+      "sql": "SELECT SUM(total_sales) AS total_sales FROM orders WHERE region='East'",
+      "expected": [
+        [
+          300.0
+        ]
+      ]
+    },
+    {
+      "id": "empty",
+      "question": "Show sales rows for the North region.",
+      "sql": "SELECT region, total_sales FROM orders WHERE region='North'",
+      "expected": []
+    },
+    {
+      "id": "monthly_year_filter",
+      "question": "What is the monthly revenue for 2024?",
+      "sql": "SELECT strftime('%Y-%m', order_date) AS period, SUM(total_sales) AS revenue FROM orders WHERE strftime('%Y', order_date) = '2024' GROUP BY period ORDER BY period",
+      "expected": [
+        [
+          "2024-01",
+          150.0
+        ],
+        [
+          "2024-02",
+          275.0
+        ]
+      ]
+    }
+  ],
+  "numeric_cases": [
+    {
+      "id": "supported",
+      "text": "Total sales are 425.",
+      "fact_ids": [
+        "rows[0].total_sales"
+      ],
+      "passed": true
+    },
+    {
+      "id": "wrong_total",
+      "text": "Total sales are 450.",
+      "fact_ids": [
+        "rows[0].total_sales"
+      ],
+      "passed": false
+    },
+    {
+      "id": "invented_growth",
+      "text": "Sales grew 15%.",
+      "fact_ids": [
+        "rows[0].total_sales"
+      ],
+      "passed": false
+    },
+    {
+      "id": "missing_evidence",
+      "text": "Total sales are 425.",
+      "fact_ids": [],
+      "passed": false
+    }
+  ]
+}
