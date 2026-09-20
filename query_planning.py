@@ -1,4 +1,4 @@
-"""Conservative templates for unfiltered monthly forecast histories."""
+"""Conservative templates for unfiltered monthly or annual forecast histories."""
 
 import re
 
@@ -10,7 +10,7 @@ def forecast_history_sql(question, schema):
     allowed = set('what will would be the forecast forecasted forecasting predict predicted '
                   'prediction project projected projection estimate estimated total number '
                   'count of order orders revenue sales in for each every month months monthly '
-                  'next year years annual annually please'.split())
+                  'next year years annual annually yearly please'.split())
     if not words or any(word not in allowed and not word.isdigit() for word in words):
         return None
     order_count = bool({'order', 'orders'} & set(words))
@@ -21,6 +21,11 @@ def forecast_history_sql(question, schema):
     metric = 'order_id' if order_count else 'total_sales'
     if not {'order_date', metric}.issubset(columns):
         return None
-    expression = 'COUNT(DISTINCT order_id) AS monthly_orders' if order_count else 'SUM(total_sales) AS total_sales'
-    return ("SELECT strftime('%Y-%m-01', order_date) AS period, " + expression
+    annual = bool({'annual', 'annually', 'yearly'} & set(words)) or bool(re.search(r'\b(?:each|every)\s+year\b', question.lower()))
+    if annual and {'month', 'months', 'monthly'} & set(words):
+        return None
+    period_format = '%Y-01-01' if annual else '%Y-%m-01'
+    alias = 'annual_orders' if annual else 'monthly_orders'
+    expression = f'COUNT(DISTINCT order_id) AS {alias}' if order_count else 'SUM(total_sales) AS total_sales'
+    return (f"SELECT strftime('{period_format}', order_date) AS period, " + expression
             + ' FROM orders GROUP BY period ORDER BY period ASC;')

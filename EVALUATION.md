@@ -40,6 +40,15 @@ these verified history plans, a successful statistical forecast remains visible
 with deterministic caveats even when AI narrative review fails. `passed` stays
 false for the narrative; the forecast is not represented as actual future data.
 
+Explicit annual/yearly requests now use annual history. Horizon units are converted
+to the history frequency: next two years is twenty-four monthly steps or two annual
+steps. "Next year" means one calendar year. Existing forecasting callers that omit
+`horizon_unit` still specify native model steps. Grouped forecasts perform the
+conversion per group, and absolute target windows retain their calendar clipping.
+
+CI runs on pull requests targeting `main`, pushes to `main` or `docker-deployment`,
+and manual dispatch. It checks syntax, tests, offline evaluations and Docker builds.
+
 Responses include `sql_evaluation`, `evaluation` and `evaluation_history`.
 Verdicts contain boolean checks, issues, a revision target and fix instructions.
 Final answer status is `passed`, `data_only`, or `blocked`; these are runtime checks, not a

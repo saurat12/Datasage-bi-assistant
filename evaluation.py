@@ -176,7 +176,38 @@ def apply_answer_applicability(verdict, forecast_requested):
     return verdict
 
 
-def build_evidence(rows, sample_limit=15, forecast=None):
+def executed_order_filters(sql):
+    """Recognize a narrow, single-table year filter; never mine arbitrary SQL literals.
+
+Complex expressions, joins, subqueries, comments and OR clauses deliberately
+return no context rather than claiming the whole result shares a filter.
+"""
+    if not isinstance(sql, str):
+        return None
+    identifier = r'[A-Za-z_][A-Za-z_0-9]*'
+    group = rf'(?:\s+GROUP\s+BY\s+{identifier}(?:\s*,\s*{identifier})*)?'
+    order = rf'(?:\s+ORDER\s+BY\s+{identifier}(?:\s+(?:ASC|DESC))?(?:\s*,\s*{identifier}(?:\s+(?:ASC|DESC))?)*)?'
+    year = r"strftime\s*\(\s*'%Y'\s*,\s*order_date\s*\)\s*=\s*'(?P<year>\d{4})'"
+    region = r"region\s*=\s*'(?P<region>[A-Za-z ]+)'"
+    match = re.fullmatch(
+        r"\s*SELECT\s+(?P<fields>[\w\s,.*()]+?)\s+FROM\s+orders\s+WHERE\s+"
+        rf"(?P<filters>{year}(?:\s+AND\s+{region})?)"
+        + group + order + r'(?:\s+LIMIT\s+\d+)?\s*;?\s*', sql, re.IGNORECASE)
+    if not match:
+        match = re.fullmatch(
+            r"\s*SELECT\s+(?P<fields>[\w\s,.*()]+?)\s+FROM\s+orders\s+WHERE\s+"
+            + region + r'\s+AND\s+' + year + group + order
+            + r'(?:\s+LIMIT\s+\d+)?\s*;?\s*', sql, re.IGNORECASE)
+    if not match or re.search(r'\b(?:SELECT|FROM|CASE|UNION|JOIN)\b', match['fields'], re.IGNORECASE):
+        return None
+    return {key: match[key] for key in ('year', 'region') if match[key] is not None}
+
+
+def executed_order_year(sql):
+    return (executed_order_filters(sql) or {}).get('year')
+
+
+def build_evidence(rows, sample_limit=15, forecast=None, *, executed_sql=None):
     """Input must already be filtered by the LLM output-field allowlist."""
     facts = {}
 
@@ -210,6 +241,22 @@ def build_evidence(rows, sample_limit=15, forecast=None):
                 add(f'returned_rows.{column}.{name}', value)
                 if common_year and f'returned_rows.{column}.{name}' in facts:
                     facts[f'returned_rows.{column}.{name}']['context'] = f'All returned periods are in {common_year}.'
+
+    query_filters = executed_order_filters(executed_sql) or {}
+    query_year = query_filters.get('year')
+    if query_year:
+        add('query.order_year', query_year)
+        for key, fact in facts.items():
+            if key.startswith(('rows[', 'returned_rows.')):
+                fact['context'] = (fact.get('context', '') +
+                    f' The executed query restricts orders.order_date to year {query_year}.').strip()
+
+    if query_filters.get('region'):
+        add('query.region', query_filters['region'])
+        for key, fact in facts.items():
+            if key.startswith(('rows[', 'returned_rows.')):
+                fact['context'] = (fact.get('context', '') +
+                    f" The executed query restricts orders.region to {query_filters['region']}.").strip()
 
     def flatten(value, prefix):
         if isinstance(value, dict):

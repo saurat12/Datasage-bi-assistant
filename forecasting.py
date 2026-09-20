@@ -45,7 +45,7 @@ _FORECAST_KEYWORDS = [
 ]
 
 _HORIZON_PATTERN = re.compile(
-    r"next\s+(\d+)\s+(day|days|week|weeks|month|months|quarter|quarters|year|years)",
+    r"next\s+(?:(\d+)\s+)?(days?|weeks?|months?|quarters?|years?)\b",
     re.IGNORECASE,
 )
 
@@ -102,7 +102,7 @@ def extract_horizon(question: str, default: int = 12) -> tuple[int, str]:
     m = _HORIZON_PATTERN.search(question.lower())
     if not m:
         return default, "periods"
-    n = int(m.group(1))
+    n = int(m.group(1) or 1)
     unit = m.group(2).rstrip("s")
     return n, unit + ("s" if n != 1 else "")
 
@@ -473,6 +473,7 @@ def _forecast_grouped(
     group_col: str,
     periods: int,
     horizon_label: str,
+    horizon_unit: Optional[str] = None,
 ) -> ForecastResult:
     """Fit one model per group and combine into a single ForecastResult."""
     work = df[[date_col, group_col, value_col]].copy()
@@ -493,6 +494,7 @@ def _forecast_grouped(
     forecast_frames: list[pd.DataFrame] = []
     methods_used: list[str] = []
     skipped: list[str] = []
+    group_steps: dict[str, int] = {}
 
     for group_name, group_df in work.groupby(group_col):
         g = group_df.sort_values(date_col).reset_index(drop=True)
@@ -500,10 +502,12 @@ def _forecast_grouped(
             skipped.append(str(group_name))
             continue
 
+        steps = _relative_periods(g[date_col].iloc[-1], freq, periods, horizon_unit)
+        group_steps[str(group_name)] = steps
         point, lower, upper, method = _fit_and_forecast(
-            g[value_col], periods=periods, seasonal_period=seasonal_period
+            g[value_col], periods=steps, seasonal_period=seasonal_period
         )
-        future_idx = _future_dates(g[date_col].iloc[-1], freq, periods)
+        future_idx = _future_dates(g[date_col].iloc[-1], freq, steps)
 
         hist_part = pd.DataFrame({
             "date": g[date_col].values,
@@ -540,7 +544,8 @@ def _forecast_grouped(
         meta={
             "freq": freq,
             "seasonal_period": seasonal_period,
-            "periods": periods,
+            "periods": max(group_steps.values(), default=periods),
+            "periods_by_group": group_steps,
             "groups": groups,
             "group_col": group_col,
             "skipped_groups": skipped,
@@ -585,6 +590,28 @@ def _clip_forecast_to_window(
 # Main entry point
 # ---------------------------------------------------------------------------
 
+def _relative_periods(last_date, freq, amount, unit):
+    """Translate a calendar horizon to steps at the actual series frequency."""
+    if type(amount) is not int or amount < 1:
+        raise ValueError("Forecast horizon must be a positive integer.")
+    unit = (unit or 'periods').lower().rstrip('s')
+    if unit == 'period':
+        return amount
+    offsets = {'day': ('days', 1), 'week': ('weeks', 1),
+               'month': ('months', 1), 'quarter': ('months', 3), 'year': ('years', 1)}
+    if unit not in offsets:
+        raise ValueError(f"Unsupported forecast horizon unit: {unit}")
+    field, multiplier = offsets[unit]
+    start = pd.Timestamp(last_date)
+    end = start + pd.DateOffset(**{field: amount * multiplier})
+    # _periods_to_reach deliberately overestimates; clip to the calendar endpoint.
+    candidates = _future_dates(start, freq, _periods_to_reach(start, end, freq))
+    steps = int((candidates <= end).sum())
+    if steps < 1:
+        raise ValueError("The requested horizon is shorter than one data period; use finer-grained history.")
+    return steps
+
+
 def forecast_series(
     df: pd.DataFrame,
     periods: int = 12,
@@ -593,6 +620,7 @@ def forecast_series(
     value_col: Optional[str] = None,
     group_col: Optional[str] = None,
     target_window: Optional[tuple[pd.Timestamp, pd.Timestamp, str]] = None,
+    horizon_unit: Optional[str] = None,
 ) -> ForecastResult:
     """
     Run a forecast on a dataframe.
@@ -606,6 +634,8 @@ def forecast_series(
     df : DataFrame with at least a date column and a numeric column.
     periods : number of future periods to forecast (used when no target_window).
     horizon_label : descriptive horizon label stored in result metadata.
+    horizon_unit : calendar unit for periods (days/weeks/months/quarters/years).
+                   Omit to preserve periods as native model steps.
     date_col, value_col : optional explicit column names; auto-detected.
     group_col : optional category column for per-group forecasting.
     target_window : optional (start_date, end_date, label) tuple. When supplied,
@@ -652,6 +682,7 @@ def forecast_series(
             group_col=group_col,
             periods=periods,
             horizon_label=horizon_label,
+            horizon_unit=horizon_unit if target_window is None else None,
         )
         if target_window is not None:
             mask = (
@@ -671,6 +702,8 @@ def forecast_series(
         )
 
     freq, seasonal_period = _infer_frequency(history["date"])
+    if target_window is None:
+        periods = _relative_periods(history["date"].iloc[-1], freq, periods, horizon_unit)
     point, lower, upper, method = _fit_and_forecast(
         history["value"], periods=periods, seasonal_period=seasonal_period
     )

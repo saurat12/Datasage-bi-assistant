@@ -4,6 +4,10 @@ on:
   push:
     branches:
       - docker-deployment
+      - main
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
@@ -40,6 +44,8 @@ jobs:
             sql_safety.py \
             database_gateway.py \
             evaluation.py \
+            query_planning.py \
+            run_evals.py \
             tests
 
       - name: Run tests

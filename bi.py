@@ -938,13 +938,14 @@ def forecast_agent_node(state: BIState) -> BIState:
         logger.info("Forecast horizon interpretation=%s", interpretation)
         if interpretation.get("mode") == "relative" and interpretation.get("periods"):
             periods = interpretation["periods"]
-            horizon_label = f"next {periods} {interpretation.get('unit', unit)}"
+            unit = interpretation.get('unit', unit)
+            horizon_label = f"next {periods} {unit}"
 
     try:
         if target is not None:
             result = forecast_series(df, periods=12, target_window=target)
         else:
-            result = forecast_series(df, periods=periods, horizon_label=horizon_label)
+            result = forecast_series(df, periods=periods, horizon_label=horizon_label, horizon_unit=unit)
     except ValueError as e:
         logger.warning("Forecast generation rejected input: %s", e)
         return {
@@ -1094,7 +1095,13 @@ def summary_node(state: BIState) -> BIState:
     evidence = build_evidence(
         _safe_rows_for_llm(rows, len(rows)), settings.summary_sample_rows,
         summary_input.get("forecast") or {"error": forecast_error},
+        executed_sql=sql,
     )
+    if len(rows) <= settings.summary_sample_rows:
+        # The complete query result already contains the requested metrics.
+        # Extra aggregates encourage unrelated totals/averages in small breakdowns.
+        evidence["facts"] = {key: fact for key, fact in evidence["facts"].items()
+                             if not key.startswith("returned_rows.")}
     try:
         resp = summary_llm.invoke([
             ("system", SUMMARY_SYSTEM_PROMPT + STRUCTURED_SUMMARY_PROMPT),

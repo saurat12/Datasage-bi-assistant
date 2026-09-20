@@ -293,6 +293,7 @@ def test_summary_evidence_filters_fields_before_aggregation():
     assert 'secret' not in seen[0][1][1]
     assert '12345' not in seen[0][1][1]
     assert result['summary'] == 'Revenue is 10.'
+    assert not any(key.startswith('returned_rows.') for key in result['evidence']['facts'])
 
 
 @pytest.mark.parametrize('forecast', [False, True])
