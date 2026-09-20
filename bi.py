@@ -1,27 +1,27 @@
 import os
 import re
 import json
-import sqlite3
 import logging
 import time
 import uuid
 from contextvars import ContextVar
-from pathlib import Path
 from typing import Optional, TypedDict, List, Dict, Any, Tuple
 from dotenv import load_dotenv
 import pandas as pd
-from langchain_community.utilities import SQLDatabase
-from langchain_community.agent_toolkits import create_sql_agent
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_openai import ChatOpenAI
 from langchain_community.callbacks.manager import get_openai_callback
 from langgraph.graph import StateGraph, END
 from openai import OpenAI
-from sqlalchemy import create_engine
-from sqlalchemy.pool import NullPool
 
 from config import get_settings
-from sql_safety import apply_row_cap, looks_like_future_filter, split_statements, validate_read_only_sql
+from sql_safety import looks_like_future_filter, split_statements, validate_read_only_sql
+from database_gateway import DatabaseGateway
+from query_planning import forecast_history_sql
+from evaluation import (
+    SQL_CHECKS, ANSWER_CHECKS, SQL_EVALUATOR_PROMPT, ANSWER_EVALUATOR_PROMPT,
+    STRUCTURED_SUMMARY_PROMPT, parse_verdict, failed_verdict, build_evidence,
+    parse_statements, check_statements, apply_answer_applicability, sql_review_rules, invoke_evaluator,
+)
 
 from forecasting import (
     ForecastResult,
@@ -56,20 +56,8 @@ for handler in logging.getLogger().handlers:
     handler.addFilter(_RequestIdFilter())
 
 
-def _readonly_connection():
-    conn = sqlite3.connect(
-        f"file:{DB_FILE.as_posix()}?mode=ro",
-        uri=True,
-        timeout=settings.sqlite_timeout_seconds,
-    )
-    conn.execute("PRAGMA query_only = ON")
-    conn.execute(f"PRAGMA busy_timeout = {int(settings.sqlite_timeout_seconds * 1000)}")
-    return conn
-
-
-engine = create_engine("sqlite://", creator=_readonly_connection, poolclass=NullPool)
-db = SQLDatabase(engine)
-logger.info("Database initialized with tables=%s", db.get_usable_table_names())
+database_gateway = DatabaseGateway(settings)
+APPROVED_SCHEMA = database_gateway.schema_description()
 
 # Separate model handles per agent role. Same underlying model here, but this
 # is where you'd swap in a cheaper/faster model for the critic, or a more
@@ -96,7 +84,7 @@ MAX_RETRIES = settings.max_sql_retries
 MAX_FORECAST_RETRIES = settings.max_forecast_retries
 
 # ---------------------------------------------------------------------------
-# SQL Agent prompts — this agent's ONLY job now is: write correct SQL, run it.
+# SQL Agent prompts — generate SQL without database tools.
 # No summary responsibility (that moved to the Summary Agent).
 # ---------------------------------------------------------------------------
 
@@ -105,8 +93,8 @@ You are a senior SQL engineer working with a SQL database.
 
 Your responsibilities:
 1. Convert the user question into a correct SQL query
-2. Execute the query
-3. Return the results
+2. Return SQL for review and execution by a separate controlled executor
+3. Never claim to have executed SQL; you have no database tools
 
 STRICT RULES:
 - Do NOT perform any DML (INSERT, UPDATE, DELETE, DROP, ALTER)
@@ -116,6 +104,11 @@ STRICT RULES:
 - If the question is ambiguous, make reasonable assumptions
 
 COLUMN RULES:
+- Match the metric: revenue uses SUM(total_sales), order counts use
+  COUNT(DISTINCT order_id) when order_id exists (orders may have multiple line items).
+  COUNT(*) measures rows, not necessarily distinct orders. Quantity means SUM(quantity).
+- "monthly orders in <year>" means one order count per month in that year.
+  Prefer a direct monthly GROUP BY rather than unnecessary nested aggregations.
 - Always use SUM(total_sales) when the user asks for total sales, revenue, or sales figures
 - Never use SUM(sales) or SUM(total_sale) — the correct column is total_sales
 - Always use strftime('%Y-%m', order_date) for monthly aggregations
@@ -231,55 +224,19 @@ WRONG (do not do this):
 """
 
 
-def _build_sql_prompt(forecast: bool) -> ChatPromptTemplate:
-    system = BASE_SQL_SYSTEM_PROMPT + (FORECAST_SQL_ADDENDUM if forecast else "")
-    return ChatPromptTemplate.from_messages([
-        ("system", system),
-        ("human", "{input}"),
-        MessagesPlaceholder(variable_name="agent_scratchpad"),
-    ])
-
-
-_agent_default = create_sql_agent(
-    llm=sql_llm, db=db, agent_type="tool-calling",
-    prompt=_build_sql_prompt(forecast=False), verbose=False,
-)
-_agent_forecast = create_sql_agent(
-    llm=sql_llm, db=db, agent_type="tool-calling",
-    prompt=_build_sql_prompt(forecast=True), verbose=False,
-)
+def _build_sql_prompt(forecast: bool) -> str:
+    return (
+        "Reference metadata only. Never reproduce this schema in your answer.\n"
+        + "<approved_schema>\n" + APPROVED_SCHEMA + "\n</approved_schema>\n\n"
+        + BASE_SQL_SYSTEM_PROMPT
+        + (FORECAST_SQL_ADDENDUM if forecast else "")
+        + "\nFINAL OUTPUT REQUIREMENT: Return only 'SQL Query:' followed by one SQL statement. "
+        + "Do not append schema metadata, explanations, or other text after the SQL."
+    )
 
 # ---------------------------------------------------------------------------
 # Critic Agent — reviews SQL against the rulebook before it's allowed to run.
 # ---------------------------------------------------------------------------
-
-CRITIC_SYSTEM_PROMPT = """You are a meticulous SQL reviewer for a BI system.
-You check a candidate SQL query against a strict rulebook BEFORE it is
-allowed to execute.
-
-RULES TO ENFORCE:
-- Must be a SELECT (or SELECT-producing CTE) statement only — no DML.
-- Must use SUM(total_sales) for sales/revenue figures, never SUM(sales) or
-  SUM(total_sale).
-- Monthly aggregations must use strftime('%Y-%m', order_date); yearly must
-  use strftime('%Y', order_date).
-- If forecast_mode is true:
-    * No WHERE clause filtering to future or recent dates
-      (date('now'), current_date, current_timestamp, order_date > '...').
-    * No LIMIT clause — full history is required.
-    * Must GROUP BY period and ORDER BY period ASC.
-    * If expected_group_dimension is set, the query MUST select and GROUP BY
-      that exact column.
-- If forecast_mode is false, results should generally be capped
-  (LIMIT 100 or fewer) unless the query is a small aggregation.
-
-You will receive the user's question, forecast_mode, expected_group_dimension,
-a list of issues a deterministic pre-check already flagged (may be empty),
-and the candidate SQL.
-
-Respond with ONLY compact JSON, nothing else:
-{"approved": true or false, "reason": "<one sentence>", "fix_instructions": "<concrete instruction for what to change, empty string if approved>"}
-"""
 
 # ---------------------------------------------------------------------------
 # Summary Agent — turns the executed rows (and, if present, a forecast) into
@@ -289,7 +246,8 @@ Respond with ONLY compact JSON, nothing else:
 SUMMARY_SYSTEM_PROMPT = """You are a senior business analyst. Given the
 user's original question, the resulting data (as JSON rows), and — if
 present — a forecast produced by a statistical model, write a concise,
-insight-forward business summary in 3-6 sentences.
+business summary, usually 3-6 sentences. For an explicitly requested period-by-period
+breakdown, include each returned period, up to 20 statements.
 
 If a "forecast" block is present in the input:
 - Weave the projection naturally into the narrative — direction, magnitude,
@@ -580,10 +538,7 @@ def _split_statements(sql: str) -> List[str]:
 
 
 def _sanitize_single_statement(sql: Optional[str]) -> Optional[str]:
-    """sqlite3's execute() only accepts one statement. If the agent (or a
-    fallback) produced more than one — e.g. leftover schema-exploration SQL
-    glued to the real query — pick the best single SELECT/CTE statement
-    instead of letting sqlite3 throw."""
+    """Reject multiple statements before passing SQL to the gateway."""
     if not sql:
         return sql
     statements = _split_statements(sql)
@@ -596,16 +551,7 @@ def _sanitize_single_statement(sql: Optional[str]) -> Optional[str]:
 
 
 def _run_sql(sql: str, forecast: bool = False) -> List[Dict[str, Any]]:
-    executable_sql = validate_read_only_sql(sql)
-    if not forecast:
-        executable_sql = apply_row_cap(executable_sql, settings.sql_row_limit)
-    conn = _readonly_connection()
-    try:
-        conn.row_factory = sqlite3.Row
-        cursor = conn.execute(executable_sql)
-        return [dict(r) for r in cursor.fetchall()]
-    finally:
-        conn.close()
+    return database_gateway.execute(sql, forecast=forecast)
 
 
 # ---------------------------------------------------------------------------
@@ -619,8 +565,19 @@ class BIState(TypedDict, total=False):
     sql: Optional[str]
     critic_approved: bool
     critic_reason: str
+    sql_check_issues: list
+    review_fallback: bool
+    sql_plan_verified: bool
     fix_instructions: str
     retry_count: int
+    sql_evaluation: dict
+    evaluation: dict
+    evaluation_history: list
+    evaluation_retry_count: int
+    evaluation_feedback: str
+    evidence: dict
+    summary_statements: list
+    summary_error: Optional[str]
     rows: Optional[List[Dict[str, Any]]]
     chart_spec: Optional[dict]
     chart_note: Optional[str]
@@ -668,8 +625,10 @@ def sql_agent_node(state: BIState) -> BIState:
     retry_count = state.get("retry_count", 0)
     feedback = state.get("critic_reason")
     fix = state.get("fix_instructions")
-
-    agent = _agent_forecast if forecast else _agent_default
+    if forecast:
+        planned_sql = forecast_history_sql(question, json.loads(APPROVED_SCHEMA))
+        if planned_sql:
+            return {**state, "sql": planned_sql, "sql_plan_verified": True, "error": None}
 
     agent_input = question
     if retry_count > 0 and feedback:
@@ -683,15 +642,18 @@ def sql_agent_node(state: BIState) -> BIState:
 
     logger.info("SQL agent attempt=%d forecast=%s", retry_count + 1, forecast)
     try:
-        response = agent.invoke({"input": agent_input})
-        output = response["output"]
+        response = sql_llm.invoke([
+            ("system", _build_sql_prompt(forecast)),
+            ("human", agent_input),
+        ])
+        output = response.content
     except Exception as e:
         logger.exception("SQL agent invocation failed")
         return {**state, "sql": None, "error": str(e)}
 
     sql = extract_sql(output)
     logger.debug("SQL generated=%r", sql)
-    return {**state, "sql": sql}
+    return {**state, "sql": sql, "sql_plan_verified": False, "error": None}
 
 
 def critic_node(state: BIState) -> BIState:
@@ -702,12 +664,16 @@ def critic_node(state: BIState) -> BIState:
     retry_count = state.get("retry_count", 0)
 
     if not sql:
+        verdict = failed_verdict(SQL_CHECKS, "No SQL was produced. Generate a single valid SELECT query.", "sql_agent")
         return {
             **state,
             "critic_approved": False,
             "critic_reason": "No SQL was produced.",
+            "sql_check_issues": ["No SQL was produced."], "review_fallback": False,
             "fix_instructions": "Generate a single valid SELECT query.",
             "retry_count": retry_count + 1,
+            "sql_evaluation": verdict,
+            "evaluation_history": state.get("evaluation_history", []) + [{"stage": "sql", **verdict}],
         }
 
     # Fast deterministic pre-checks, kept as a belt-and-suspenders layer
@@ -736,63 +702,67 @@ def critic_node(state: BIState) -> BIState:
         "expected_group_dimension": group_col,
         "deterministic_pre_check_issues": det_issues,
         "candidate_sql": sql,
+        "approved_schema": json.loads(APPROVED_SCHEMA),
+        "sql_task": ("Retrieve historical training data only. The Python forecast engine handles "
+                     "the requested future target; SQL must not produce predictions or filter to that target.")
+                    if forecast else "Answer the historical question directly.",
     })
 
     try:
-        resp = critic_llm.invoke([
-            ("system", CRITIC_SYSTEM_PROMPT),
-            ("human", critic_input),
-        ])
-        raw = re.sub(r"```json|```", "", resp.content.strip()).strip()
-        verdict = json.loads(raw)
-    except Exception as e:
-        logger.warning("LLM critic failed; deterministic checks used: %s", e)
-        verdict = {
-            "approved": len(det_issues) == 0,
-            "reason": "; ".join(det_issues) or "Deterministic checks passed.",
-            "fix_instructions": "; ".join(det_issues),
+        verdict = invoke_evaluator(
+            critic_llm, SQL_EVALUATOR_PROMPT + "\nApplicable rules:\n" + sql_review_rules(forecast),
+            json.loads(critic_input), SQL_CHECKS, {"sql_agent"},
+        ) if not state.get("sql_plan_verified") else {
+            "passed": True, "checks": {key: True for key in SQL_CHECKS},
+            "issues": [], "retry_target": None, "fix_instructions": "",
+            "source": "deterministic_forecast_history_plan",
         }
-
-    approved = bool(verdict.get("approved")) and not det_issues
-    logger.info("SQL critic approved=%s reason=%s", approved, verdict.get("reason"))
-
+    except Exception:
+        logger.exception("SQL evaluation failed")
+        verdict = failed_verdict(SQL_CHECKS, "SQL evaluator unavailable or returned an invalid verdict.", "sql_agent")
+    if det_issues:
+        verdict = {**verdict, "passed": False,
+                   "checks": {**verdict["checks"], "rules_followed": False},
+                   "issues": verdict["issues"] + det_issues, "retry_target": "sql_agent",
+                   "fix_instructions": "; ".join(det_issues + [verdict["fix_instructions"]])}
+    approved = verdict["passed"]
+    reason = "; ".join(verdict["issues"])
+    logger.info("SQL evaluation passed=%s issues=%s", approved, verdict["issues"])
     return {
-        **state,
-        "critic_approved": approved,
-        "critic_reason": verdict.get("reason", ""),
-        "fix_instructions": verdict.get("fix_instructions", ""),
+        **state, "critic_approved": approved, "critic_reason": reason,
+        "sql_check_issues": det_issues, "review_fallback": False,
+        "fix_instructions": verdict["fix_instructions"], "sql_evaluation": verdict,
+        "evaluation_history": state.get("evaluation_history", []) + [{"stage": "sql", **verdict}],
         "retry_count": retry_count + (0 if approved else 1),
     }
 
 
 def fallback_node(state: BIState) -> BIState:
-    """Deterministic backstop, reached only after MAX_RETRIES failed
-    critic reviews. Guarantees the pipeline never dead-ends."""
-    forecast = state.get("forecast", False)
-    group_col = state.get("group_col")
-
-    if forecast:
-        sql = _build_forecast_sql(group_col)
-        logger.warning("Using canonical historical forecast query")
-    else:
-        sql = state.get("sql") or "SELECT * FROM orders LIMIT 100;"
-        if "limit" not in sql.lower():
-            sql = sql.rstrip(";") + " LIMIT 100;"
-        logger.warning("Using best-effort SQL fallback")
-
+    """Keep reviewer uncertainty separate from mandatory database controls."""
+    sql = state.get("sql")
+    if sql and state.get("sql_check_issues") == []:
+        try:
+            validate_read_only_sql(sql)
+            return {**state, "review_fallback": True, "critic_approved": False, "error": None}
+        except ValueError:
+            pass
+    reason = state.get("critic_reason") or "The SQL reviewer did not approve the generated query."
     return {
         **state,
-        "sql": sql,
-        "critic_approved": True,
-        "critic_reason": "Fallback: canonical/safety-net query used after exhausting retries.",
+        "sql": None,
+        "critic_approved": False,
+        "error": "SQL review stopped before database execution. " + reason,
     }
 
 
 def executor_node(state: BIState) -> BIState:
-    sql = _sanitize_single_statement(state.get("sql"))
-    if not sql:
-        return {**state, "sql": None, "rows": [], "error": "No valid SQL statement to execute."}
+    if not state.get("critic_approved") and not state.get("review_fallback"):
+        return {**state, "rows": [], "error": state.get("error") or "SQL was not approved for execution."}
+    sql = state.get("sql")
     try:
+        sql = _sanitize_single_statement(sql)
+        if not sql:
+            raise ValueError("No valid SQL statement to execute.")
         rows = _run_sql(sql, forecast=state.get("forecast", False))
         logger.info("SQL execution completed rows=%d", len(rows))
         # Persist the sanitized version so the SQL shown downstream (and
@@ -1082,8 +1052,10 @@ def summary_node(state: BIState) -> BIState:
     forecast_error = state.get("forecast_error")
 
     if error:
-        summary = f"⚠️ The query failed to execute: {error}"
+        summary = f"⚠️ {error}"
         return {**state, "summary": summary}
+    if state.get("review_fallback"):
+        return {**state, "summary": data_only_summary(state)}
 
     summary_input: Dict[str, Any] = {
         "question": question,
@@ -1097,6 +1069,7 @@ def summary_node(state: BIState) -> BIState:
         except Exception:
             forecast_stats = None
         summary_input["forecast"] = {
+            "monthly_values": forecast_result.forecast.head(20).to_dict(orient="records"),
             "method": forecast_result.method,
             "horizon": forecast_result.meta.get("target_window")
                        or f"{forecast_result.meta.get('periods')} periods",
@@ -1113,21 +1086,105 @@ def summary_node(state: BIState) -> BIState:
                 "smape_percent": accuracy.smape,
                 "validation_points": accuracy.n_points,
                 "validation_splits": accuracy.n_splits,
+                "validation_scope": "Aggregated across groups" if forecast_result.meta.get("group_col") else "Single historical series",
             }
     elif forecast_error:
         summary_input["forecast_error"] = forecast_error
 
+    evidence = build_evidence(
+        _safe_rows_for_llm(rows, len(rows)), settings.summary_sample_rows,
+        summary_input.get("forecast") or {"error": forecast_error},
+    )
     try:
         resp = summary_llm.invoke([
-            ("system", SUMMARY_SYSTEM_PROMPT),
-            ("human", json.dumps(summary_input, default=str)),
+            ("system", SUMMARY_SYSTEM_PROMPT + STRUCTURED_SUMMARY_PROMPT),
+            ("human", json.dumps({"question": question, "evidence": evidence,
+                                 "revision_instructions": state.get("evaluation_feedback", "")}, default=str)),
         ])
-        summary = resp.content.strip().replace("$", r"\$")
-    except Exception as e:
+        statements = parse_statements(resp.content)
+        summary = " ".join(item["text"] for item in statements).replace("$", r"\$")
+        summary_error = None
+    except Exception:
         logger.exception("Summary generation failed")
-        summary = f"Retrieved {len(rows)} rows for: {question}"
+        summary, statements = "", []
+        summary_error = "Summary generation failed or returned invalid structured statements."
+    return {**state, "summary": summary, "summary_statements": statements,
+            "summary_error": summary_error, "evidence": evidence}
 
-    return {**state, "summary": summary}
+
+def data_only_summary(state: BIState) -> str:
+    result = state.get("forecast_result")
+    if result is not None and state.get("sql_plan_verified") and not state.get("forecast_error"):
+        summary = "Showing the statistical forecast below, based on the historical data. These are estimates, not actual future orders or sales. The AI-written interpretation could not be verified."
+        warnings = result.meta.get("warnings", [])
+        if warnings:
+            summary += " " + " ".join(warnings)
+        accuracy = result.meta.get("accuracy")
+        if isinstance(accuracy, AccuracyMetrics):
+            summary += (f" Historical backtest error was {accuracy.mape:.2f}% MAPE across "
+                        f"{accuracy.n_splits} validation splits ({accuracy.n_points} points) "
+                        "on the single historical series; this is not guaranteed future accuracy.")
+        return summary
+    if not state.get("rows"):
+        return "The generated query returned no matching rows. Automated review could not confirm that it fully answers your question; the SQL is available for inspection."
+    return "Showing the retrieved query results below. Automated review could not confirm a reliable interpretation, so no AI-generated analysis is included. You can inspect the SQL and data."
+
+
+def answer_evaluation_node(state: BIState) -> BIState:
+    if state.get("error"):
+        verdict = failed_verdict(ANSWER_CHECKS, "No executable approved result was available.", "sql_agent")
+        return {**state, "evaluation": {**verdict, "status": "blocked"},
+                "evaluation_history": state.get("evaluation_history", []) + [{"stage": "answer", **verdict}]}
+    if state.get("review_fallback"):
+        verdict = failed_verdict(ANSWER_CHECKS, "SQL semantic review was inconclusive; showing query results only.", "sql_agent")
+        return {**state, "summary": data_only_summary(state),
+                "evaluation": {**verdict, "status": "data_only"},
+                "evaluation_history": state.get("evaluation_history", []) + [{"stage": "answer", **verdict}]}
+    issues = ([state["summary_error"]] if state.get("summary_error") else
+              check_statements(state.get("summary_statements", []), state["evidence"]))
+    try:
+        if issues:
+            verdict = failed_verdict(ANSWER_CHECKS, "; ".join(issues), "summary_agent")
+        else:
+            verdict = invoke_evaluator(
+                critic_llm, ANSWER_EVALUATOR_PROMPT, {
+                    "question": state["question"], "executed_sql": state.get("sql"),
+                    "evidence": state["evidence"], "statements": state["summary_statements"],
+                    "forecast_requested": state.get("forecast", False),
+                }, ANSWER_CHECKS, {"sql_agent", "summary_agent"},
+            )
+            verdict = apply_answer_applicability(verdict, state.get("forecast", False))
+    except Exception:
+        logger.exception("Answer evaluation failed")
+        verdict = failed_verdict(ANSWER_CHECKS, "Answer evaluator unavailable or returned an invalid verdict.", "summary_agent")
+    retries = state.get("evaluation_retry_count", 0)
+    status = "passed" if verdict["passed"] else (
+        "retrying" if retries < settings.max_evaluation_retries else "blocked")
+    result = {**state, "evaluation": {**verdict, "status": status},
+              "evaluation_history": state.get("evaluation_history", []) + [{"stage": "answer", **verdict}],
+              "evaluation_feedback": verdict["fix_instructions"]}
+    if status == "retrying":
+        result["evaluation_retry_count"] = retries + 1
+        if verdict["retry_target"] == "sql_agent":
+            result.update(sql=None, rows=[], critic_approved=False, retry_count=1,
+                          review_fallback=False, sql_check_issues=[],
+                          critic_reason="; ".join(verdict["issues"]),
+                          fix_instructions=verdict["fix_instructions"], error=None,
+                          forecast_result=None, forecast_df=None, forecast_error=None,
+                          forecast_retry_count=0, forecast_chart_spec=None,
+                          chart_spec=None, chart_note=None, summary="", summary_statements=[])
+    if status == "blocked":
+        result["evaluation"]["status"] = "data_only"
+        result["summary"] = data_only_summary(state)
+    logger.info("Answer evaluation status=%s revisions=%d", status, retries)
+    return result
+
+
+def route_after_evaluation(state: BIState) -> str:
+    verdict = state["evaluation"]
+    if verdict["status"] == "retrying":
+        return verdict["retry_target"]
+    return "viz" if verdict["passed"] else "end"
 
 
 def viz_node(state: BIState) -> BIState:
@@ -1160,6 +1217,8 @@ def route_after_executor(state: BIState) -> str:
     state['forecast'] flag set once by orchestrator_node — non-forecast
     questions never invoke forecast_agent_node at all (not a no-op call,
     a graph edge that's never taken)."""
+    if state.get("review_fallback") or state.get("error"):
+        return "summary"
     if state.get("forecast"):
         return "forecast"
     return "summary"
@@ -1192,6 +1251,7 @@ def _build_graph():
     graph.add_node("accuracy_agent", accuracy_agent_node)
     graph.add_node("summary_agent", summary_node)
     graph.add_node("viz_agent", viz_node)
+    graph.add_node("answer_evaluator", answer_evaluation_node)
 
     graph.set_entry_point("orchestrator")
     graph.add_edge("orchestrator", "sql_agent")
@@ -1224,7 +1284,10 @@ def _build_graph():
     )
     graph.add_edge("accuracy_agent", "summary_agent")
 
-    graph.add_edge("summary_agent", "viz_agent")
+    graph.add_edge("summary_agent", "answer_evaluator")
+    graph.add_conditional_edges("answer_evaluator", route_after_evaluation, {
+        "sql_agent": "sql_agent", "summary_agent": "summary_agent", "viz": "viz_agent", "end": END,
+    })
     graph.add_edge("viz_agent", END)
 
     return graph.compile()
@@ -1245,8 +1308,9 @@ def ask_bi_agent(question: str) -> dict:
     Run the multi-agent BI pipeline on a question.
 
     Orchestrator (decides forecast intent) -> SQL Agent -> Critic Agent
-    (retry loop, then deterministic fallback) -> Executor ->
-    [Forecast Agent, only if forecast-related] -> Summary Agent -> Viz Agent.
+    (bounded retry loop; stop on rejection) -> Executor ->
+    [Forecast Agent, only if forecast-related] -> Summary Agent -> Answer Evaluator
+    (bounded SQL/summary revisions) -> Viz Agent, only after a verified answer.
 
     Parameters
     ----------
@@ -1262,9 +1326,12 @@ def ask_bi_agent(question: str) -> dict:
         forecast_used       : bool
         forecast            : dict | None
         forecast_error      : str | None
+        evaluation          : dict with final verdict, checks, issues, and status
+        sql_evaluation      : dict with the most recent SQL verdict
+        evaluation_history  : list of stage verdicts across revisions
     """
     try:
-        normalized_question = " ".join(question.lower().split())
+        normalized_question = question.strip()
         cached = _response_cache.get(normalized_question)
         if cached and time.monotonic() - cached[0] < settings.cache_ttl_seconds:
             logger.info("Returning cached response")
@@ -1273,7 +1340,11 @@ def ask_bi_agent(question: str) -> dict:
         token = _request_id.set(str(uuid.uuid4()))
         try:
             with get_openai_callback() as usage:
-                final_state = _compiled_graph.invoke({"question": question})
+                final_state = _compiled_graph.invoke(
+                    {"question": question},
+                    {"recursion_limit": (settings.max_evaluation_retries + 1)
+                     * (2 * MAX_RETRIES + MAX_FORECAST_RETRIES + 15) + 10},
+                )
             logger.info(
                 "LLM usage prompt_tokens=%s completion_tokens=%s total_tokens=%s cost_usd=%s",
                 usage.prompt_tokens,
@@ -1283,7 +1354,12 @@ def ask_bi_agent(question: str) -> dict:
             )
         finally:
             _request_id.reset(token)
-        forecast_result = final_state.get("forecast_result")
+        evaluation = final_state.get("evaluation", {"passed": False, "status": "blocked"})
+        verified = evaluation.get("passed") is True
+        statistical_fallback = (evaluation.get("status") == "data_only"
+                                and final_state.get("sql_plan_verified")
+                                and not final_state.get("forecast_error"))
+        forecast_result = final_state.get("forecast_result") if verified or statistical_fallback else None
 
         forecast_payload = None
         if final_state.get("forecast", False) and forecast_result is not None:
@@ -1309,6 +1385,7 @@ def ask_bi_agent(question: str) -> dict:
                     ),
                 }
             forecast_payload = {
+                "rows": json.loads(forecast_result.forecast.to_json(orient="records", date_format="iso")),
                 "chart_spec": final_state.get("forecast_chart_spec"),
                 "method": forecast_result.method,
                 "meta": meta,
@@ -1319,17 +1396,22 @@ def ask_bi_agent(question: str) -> dict:
             "sql": final_state.get("sql"),
             "chart_spec": final_state.get("chart_spec"),
             "chart_note": final_state.get("chart_note"),
-            "rows": final_state.get("rows"),
-            "forecast_used": bool(final_state.get("forecast")),
+            "rows": final_state.get("rows") if verified or evaluation.get("status") == "data_only" else [],
+            "evaluation": evaluation,
+            "sql_evaluation": final_state.get("sql_evaluation"),
+            "evaluation_history": final_state.get("evaluation_history", []),
+            "forecast_used": bool(forecast_payload) or (bool(final_state.get("forecast")) and evaluation.get("status") != "data_only"),
             "forecast": forecast_payload,
             "forecast_error": final_state.get("forecast_error"),
         }
-        _response_cache[normalized_question] = (time.monotonic(), response)
+        if verified:
+            _response_cache[normalized_question] = (time.monotonic(), response)
         return response
 
     except Exception:
         logger.exception("BI request failed")
         return {
+            "evaluation": {"passed": False, "status": "blocked"},
             "summary": "The assistant is temporarily unavailable. Please try again shortly.",
             "sql": None,
             "chart_spec": None,

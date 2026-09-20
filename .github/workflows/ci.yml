@@ -38,11 +38,14 @@ jobs:
             accuracy.py \
             config.py \
             sql_safety.py \
+            database_gateway.py \
+            evaluation.py \
             tests
 
       - name: Run tests
         run: |
           python -m pytest -q
+          python run_evals.py
 
   docker-build:
     name: Build Docker image

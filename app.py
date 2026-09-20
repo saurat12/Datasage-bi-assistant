@@ -307,12 +307,15 @@ for msg in st.session_state.messages:
             with st.expander("SQL Query"):
                 st.code(msg["sql"], language="sql")
         if msg.get("rows") and not msg.get("forecast_used"):
-            with st.expander("Data"):
+            with st.expander("Data", expanded=msg.get("evaluation_status") == "data_only"):
                 st.dataframe(msg["rows"], use_container_width=True)
         if msg.get("chart_spec"):
             render_chart(msg["chart_spec"])
         if msg.get("forecast_chart"):
             render_chart(msg["forecast_chart"])
+        if msg.get("forecast_rows"):
+            with st.expander("Forecast values"):
+                st.dataframe(msg["forecast_rows"], use_container_width=True)
 
 
 # ---------------------------------------------------------------------------
@@ -344,7 +347,7 @@ if question:
                 st.code(result["sql"], language="sql")
 
         if result.get("rows") and not forecast_used:
-            with st.expander("Data"):
+            with st.expander("Data", expanded=result.get("evaluation", {}).get("status") == "data_only"):
                 st.dataframe(result["rows"], use_container_width=True)
 
         # Forecast responses have their own combined history + forecast chart.
@@ -355,6 +358,9 @@ if question:
             st.markdown("---")
             if forecast.get("chart_spec"):
                 render_chart(forecast["chart_spec"])
+            if forecast.get("rows"):
+                with st.expander("Forecast values", expanded=True):
+                    st.dataframe(forecast["rows"], use_container_width=True)
         elif forecast_error:
             st.markdown("---")
             st.markdown(forecast_error)
@@ -365,8 +371,10 @@ if question:
         "sql": result.get("sql"),
         "chart_spec": result.get("chart_spec"),
         "rows": result.get("rows"),
+        "evaluation_status": result.get("evaluation", {}).get("status"),
         "forecast_used": forecast_used,
         "forecast_chart": forecast.get("chart_spec") if forecast else None,
+        "forecast_rows": forecast.get("rows") if forecast else None,
     })
 
 st.markdown("</div></div>", unsafe_allow_html=True)
