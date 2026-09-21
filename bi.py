@@ -9,10 +9,10 @@ from typing import Optional, TypedDict, List, Dict, Any, Tuple
 from dotenv import load_dotenv
 import pandas as pd
 from langchain_openai import ChatOpenAI
-from langchain_community.callbacks.manager import get_openai_callback
 from langgraph.graph import StateGraph, END
 from openai import OpenAI
 
+from telemetry import TrackedModel, tracked_call, measure_request, mark_cache_hit
 from config import get_settings
 from sql_safety import looks_like_future_filter, split_statements, validate_read_only_sql
 from database_gateway import DatabaseGateway
@@ -69,11 +69,11 @@ _llm_options = dict(
     timeout=settings.request_timeout_seconds,
     max_retries=settings.openai_max_retries,
 )
-sql_llm = ChatOpenAI(**_llm_options)
-critic_llm = ChatOpenAI(**_llm_options)
-summary_llm = ChatOpenAI(**_llm_options)
-orchestrator_llm = ChatOpenAI(**_llm_options)
-forecast_llm = ChatOpenAI(**_llm_options)
+sql_llm = TrackedModel(ChatOpenAI(**_llm_options), "sql", settings.openai_model)
+critic_llm = TrackedModel(ChatOpenAI(**_llm_options), "critic", settings.openai_model)
+summary_llm = TrackedModel(ChatOpenAI(**_llm_options), "summary", settings.openai_model)
+orchestrator_llm = TrackedModel(ChatOpenAI(**_llm_options), "orchestrator", settings.openai_model)
+forecast_llm = TrackedModel(ChatOpenAI(**_llm_options), "forecast", settings.openai_model)
 _viz_client = OpenAI(
     api_key=OPENAI_API_KEY,
     timeout=settings.request_timeout_seconds,
@@ -457,7 +457,7 @@ Rules:
 Full data: {json.dumps(chart_data)}"""
 
     try:
-        response = _viz_client.chat.completions.create(
+        response = tracked_call("chart", "gpt-4o-mini", _viz_client.chat.completions.create,
             model="gpt-4o-mini",
             max_tokens=2048,
             temperature=0,
@@ -1310,6 +1310,7 @@ _compiled_graph = _build_graph()
 _response_cache: Dict[str, Tuple[float, dict]] = {}
 
 
+@measure_request
 def ask_bi_agent(question: str) -> dict:
     """
     Run the multi-agent BI pipeline on a question.
@@ -1342,22 +1343,15 @@ def ask_bi_agent(question: str) -> dict:
         cached = _response_cache.get(normalized_question)
         if cached and time.monotonic() - cached[0] < settings.cache_ttl_seconds:
             logger.info("Returning cached response")
+            mark_cache_hit()
             return cached[1]
 
         token = _request_id.set(str(uuid.uuid4()))
         try:
-            with get_openai_callback() as usage:
-                final_state = _compiled_graph.invoke(
-                    {"question": question},
-                    {"recursion_limit": (settings.max_evaluation_retries + 1)
-                     * (2 * MAX_RETRIES + MAX_FORECAST_RETRIES + 15) + 10},
-                )
-            logger.info(
-                "LLM usage prompt_tokens=%s completion_tokens=%s total_tokens=%s cost_usd=%s",
-                usage.prompt_tokens,
-                usage.completion_tokens,
-                usage.total_tokens,
-                usage.total_cost,
+            final_state = _compiled_graph.invoke(
+                {"question": question},
+                {"recursion_limit": (settings.max_evaluation_retries + 1)
+                 * (2 * MAX_RETRIES + MAX_FORECAST_RETRIES + 15) + 10},
             )
         finally:
             _request_id.reset(token)

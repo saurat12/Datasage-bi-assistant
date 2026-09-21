@@ -81,3 +81,23 @@ forecast series. The current live cases cover historical queries; forecast
 evidence and routing have automated regression coverage, but there is no live
 forecast quality benchmark yet. Record model/version and compare reports across
 changes; never treat a judge agreeing with itself as ground truth.
+
+## Request metrics
+
+Each answer includes a Request details expander with wall-clock response time,
+reported input/output tokens, model call timings, cache status and estimated USD
+API cost. Metrics are retained in chat history and logged as request_metrics JSON.
+All application-level LLM retries, including evaluator and chart retries, are
+counted. SDK-internal retry counts and usage not returned by the provider cannot
+be measured; missing usage/pricing makes the total cost unavailable. This is not
+an invoice or infrastructure cost estimate. Response latency includes database
+and forecasting work; the call table measures model calls only.
+
+Default standard pricing for gpt-4o-mini and gpt-4o-mini-2024-07-18 was checked
+2026-09-20 at https://developers.openai.com/api/docs/models/gpt-4o-mini:
+USD per million tokens: input 0.15, cached input 0.075, output 0.60.
+Override/add exact model names with MODEL_PRICES_JSON in the runtime environment:
+`{"gpt-4o-mini": [0.15, 0.075, 0.60]}`.
+Unknown models have no guessed price. Docker users should set this in
+.env.docker (or the Compose runtime environment), then recreate the container.
+Cache hits record zero new tokens/cost rather than repeating the original usage.

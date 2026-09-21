@@ -39,6 +39,7 @@ jobs:
           python -m compileall -q \
             app.py \
             bi.py \
+            telemetry.py \
             forecasting.py \
             accuracy.py \
             config.py \
