@@ -3,9 +3,7 @@ name: DataSage CI
 on:
   push:
     branches:
-      - docker-deployment
-      - main
-      - eval-updates
+      - '**'
   pull_request:
     branches:
       - main
