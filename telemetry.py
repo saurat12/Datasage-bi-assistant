@@ -5,10 +5,12 @@ import json
 import logging
 import math
 import os
+from threading import Lock
 import time
 import uuid
 
 _current = ContextVar('request_metrics', default=None)
+_current_lock = ContextVar('request_metrics_lock', default=None)
 DEFAULT_PRICES = {'gpt-4o-mini': [0.15, 0.075, 0.60],
                   'gpt-4o-mini-2024-07-18': [0.15, 0.075, 0.60]}
 
@@ -48,10 +50,16 @@ def tracked_call(stage, model, call, /, *args, **kwargs):
             cached = getattr(getattr(usage, 'prompt_tokens_details', None), 'cached_tokens', 0) or 0
         cached = min(inputs, cached)
         cost = price(actual_model, inputs, cached, outputs) if usage is not None else None
-        metrics['calls'].append(dict(stage=stage, model=actual_model,
+        entry = dict(stage=stage, model=actual_model,
             seconds=round(time.perf_counter() - start, 4), failed=failed,
             input_tokens=inputs, output_tokens=outputs, cached_input_tokens=cached,
-            usage_reported=usage is not None, estimated_cost_usd=cost))
+            usage_reported=usage is not None, estimated_cost_usd=cost)
+        lock = _current_lock.get()
+        if lock is None:
+            metrics['calls'].append(entry)
+        else:
+            with lock:
+                metrics['calls'].append(entry)
 
 
 class TrackedModel:
@@ -73,6 +81,7 @@ def measure_request(fn):
         start = time.perf_counter()
         metrics = dict(request_id=str(uuid.uuid4()), cache_hit=False, calls=[])
         token = _current.set(metrics)
+        lock_token = _current_lock.set(Lock())
         try:
             result = fn(*args, **kwargs)
             metrics['outcome'] = result.get('evaluation', {}).get('status', 'unknown')
@@ -87,5 +96,6 @@ def measure_request(fn):
             logging.getLogger('datasage').info('request_metrics %s', json.dumps(metrics))
             return {**result, 'metrics': metrics}
         finally:
+            _current_lock.reset(lock_token)
             _current.reset(token)
     return wrapped

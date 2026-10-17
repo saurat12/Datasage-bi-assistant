@@ -1,0 +1,384 @@
+{
+  "existing_checks": [
+    {
+      "name": "pytest",
+      "command": [
+        "C:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Scripts\\python.exe",
+        "-m",
+        "pytest"
+      ],
+      "returncode": 1,
+      "stdout": "============================= test session starts =============================\nplatform win32 -- Python 3.12.10, pytest-9.1.1, pluggy-1.6.0\nrootdir: C:\\Users\\saura\\AppData\\Local\\Temp\\aidebug-q8mh7bok\\BIAssistant\nconfigfile: pytest.ini\ntestpaths: tests, test_accuracy.py\nplugins: anyio-4.12.1, langsmith-0.7.22\ncollected 127 items\n\ntests\\test_database_gateway.py EEEEEEEEEEEEEEEEEEEEEEEEEEEF              [ 22%]\ntests\\test_evaluation.py ...F..............FFFFFF...FFFFF                [ 47%]\ntests\\test_forecast_horizons.py .................                        [ 60%]\ntests\\test_forecast_routing.py ..                                        [ 62%]\ntests\\test_forecast_sql.py F                                             [ 62%]\ntests\\test_query_evidence.py .............                               [ 73%]\ntests\\test_query_planning.py .......F                                    [ 79%]\ntests\\test_sql_safety.py .......                                         [ 85%]\ntests\\test_telemetry.py ......                                           [ 89%]\ntest_accuracy.py .............                                           [100%]\n\n=================================== ERRORS ====================================\n________ ERROR at setup of test_schema_exposes_only_approved_metadata _________\n\ncls = <class '_pytest.runner.CallInfo'>\nfunc = <function call_and_report.<locals>.<lambda> at 0x000001EE52D7B240>\nwhen = 'setup'\nreraise = (<class '_pytest.outcomes.Exit'>, <class 'KeyboardInterrupt'>)\n\n    @classmethod\n    def from_call(\n        cls,\n        func: Callable[[], TResult],\n        when: Literal[\"collect\", \"setup\", \"call\", \"teardown\"],\n        reraise: type[BaseException] | tuple[type[BaseException], ...] | None = None,\n    ) -> CallInfo[TResult]:\n        \"\"\"Call func, wrapping the result in a CallInfo.\n    \n        :param func:\n            The function to call. Called without arguments.\n        :type func: Callable[[], _pytest.runner.TResult]\n        :param when:\n            The phase in which the function is called.\n        :param reraise:\n            Exception or exceptions that shall propagate if raised by the\n            function, instead of being wrapped in the CallInfo.\n        \"\"\"\n        excinfo = None\n        instant = timing.Instant()\n        try:\n>           result: TResult | None = func()\n                                     ^^^^^^\n\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\runner.py:361: \n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\runner.py:250: in <lambda>\n    lambda: runtest_hook(item=item, **kwds),\n            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\pluggy\\_hooks.py:512: in __call__\n    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\pluggy\\_manager.py:120: in _hookexec\n    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\logging.py:858: in pytest_runtest_setup\n    yield\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\capture.py:895: in pytest_runtest_setup\n    return (yield)\n            ^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\runner.py:170: in pytest_runtest_setup\n    item.session._setupstate.setup(item)\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\runner.py:536: in setup\n    col.setup()\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\python.py:1710: in setup\n    self._request._fillfixtures()\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\fixtures.py:806: in _fillfixtures\n    item.funcargs[argname] = self.getfixturevalue(argname)\n                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\fixtures.py:630: in getfixturevalue\n    fixturedef = self._get_active_fixturedef(argname)\n                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\fixtures.py:726: in _get_active_fixturedef\n    fixturedef.execute(request=subrequest)\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\fixtures.py:1181: in execute\n    fixturedef = request._get_active_fixturedef(argname)\n                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\fixtures.py:726: in _get_active_fixturedef\n    fixturedef.execute(request=subrequest)\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\fixtures.py:1232: in execute\n    result: FixtureValue = ihook.pytest_fixture_setup(\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\pluggy\\_hooks.py:512: in __call__\n    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\pluggy\\_manager.py:120: in _hookexec\n    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\pluggy\\_callers.py:53: in run_old_style_hookwrapper\n    return result.get_result()\n           ^^^^^^^^^^^^^^^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\pluggy\\_callers.py:38: in run_old_style_hookwrapper\n    res = yield\n          ^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\setuponly.py:36: in pytest_fixture_setup\n    return (yield)\n            ^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\fixtures.py:1328: in pytest_fixture_setup\n    result = call_fixture_func(fixturefunc, request, kwargs)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\fixtures.py:998: in call_fixture_func\n    fixture_result = next(generator)\n                     ^^^^^^^^^^^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\tmpdir.py:300: in tmp_path\n    path = _mk_tmp(request, tmp_path_factory)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\tmpdir.py:287: in _mk_tmp\n    return factory.mktemp(name, numbered=True)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\tmpdir.py:136: in mktemp\n    basename = self._ensure_relative_to_basetemp(basename)\n               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\tmpdir.py:117: in _ensure_relative_to_basetemp\n    if (self.getbasetemp() / basename).resolve().parent != self.getbasetemp():\n        ^^^^^^^^^^^^^^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\tmpdir.py:213: in getbasetemp\n    basetemp = make_numbered_dir_with_cleanup(\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\pathlib.py:420: in make_numbered_dir_with_cleanup\n    raise e\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\pathlib.py:401: in make_numbered_dir_with_cleanup\n    p = make_numbered_dir(root, prefix, mode)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\pathlib.py:228: in make_numbered_dir\n    max_existing = max(map(parse_num, find_suffixes(root, prefix)), default=-1)\n                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\pathlib.py:187: in extract_suffixes\n    for entry in iter:\n                 ^^^^\n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _\n\nroot = WindowsPath('C:/Users/saura/AppData/Local/Temp/pytest-of-saura')\nprefix = 'pytest-'\n\n    def find_prefixed(root: Path, prefix: str) -> Iterator[os.DirEntry[str]]:\n        \"\"\"Find all elements in root that begin with the prefix, case-insensitive.\"\"\"\n        l_prefix = prefix.lower()\n>       for x in os.scandir(root):\n                 ^^^^^^^^^^^^^^^^\nE       PermissionError: [WinError 5] Access is denied: 'C:\\\\Users\\\\saura\\\\AppData\\\\Local\\\\Temp\\\\pytest-of-saura'\n\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\pathlib.py:175: PermissionError\n_____________ ERROR at setup of test_select_and_cte_aggregations ______________\n\ncls = <class '_pytest.runner.CallInfo'>\nfunc = <function call_and_report.<locals>.<lambda> at 0x000001EE52DC53A0>\nwhen = 'setup'\nreraise = (<class '_pytest.outcomes.Exit'>, <class 'KeyboardInterrupt'>)\n\n    @classmethod\n    def from_call(\n        cls,\n        func: Callable[[], TResult],\n        when: Literal[\"collect\", \"setup\", \"call\", \"teardown\"],\n        reraise: type[BaseException] | tuple[type[BaseException], ...] | None = None,\n    ) -> CallInfo[TResult]:\n        \"\"\"Call func, wrapping the result in a CallInfo.\n    \n        :param func:\n            The function to call. Called without arguments.\n        :type func: Callable[[], _pytest.runner.TResult]\n        :param when:\n            The phase in which the function is called.\n        :param reraise:\n            Exception or exceptions that shall propagate if raised by the\n            function, instead of being wrapped in the CallInfo.\n        \"\"\"\n        excinfo = None\n        instant = timing.Instant()\n        try:\n>           result: TResult | None = func()\n                                     ^^^^^^\n\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\runner.py:361: \n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\runner.py:250: in <lambda>\n    lambda: runtest_hook(item=item, **kwds),\n            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\pluggy\\_hooks.py:512: in __call__\n    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\pluggy\\_manager.py:120: in _hookexec\n    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\logging.py:858: in pytest_runtest_setup\n    yield\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\capture.py:895: in pytest_runtest_setup\n    return (yield)\n            ^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\runner.py:170: in pytest_runtest_setup\n    item.session._setupstate.setup(item)\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\runner.py:536: in setup\n    col.setup()\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\python.py:1710: in setup\n    self._request._fillfixtures()\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\fixtures.py:806: in _fillfixtures\n    item.funcargs[argname] = self.ge",
+      "stderr": "",
+      "duration_seconds": 28.343999999924563,
+      "blocked_reason": null,
+      "status": "FAIL"
+    }
+  ],
+  "findings": [
+    {
+      "finding_id": "hunt_c42d8d9e34ff5f0c",
+      "file": "forecasting.py",
+      "symbol": "_future_dates",
+      "suspected_symbol": "_future_dates",
+      "verification_target": "_future_dates",
+      "category": "forecast_date_alignment",
+      "hypothesis": "Forecast dates can skip the first future period when the last observation is not on a pandas frequency boundary.",
+      "evidence": {
+        "summary": "The function always discards the first date returned by date_range, assuming it is the historical date. For an unaligned start, date_range begins at the next frequency boundary instead.",
+        "locations": [
+          "forecasting.py:386-387",
+          "forecasting.py:593-612",
+          "forecasting.py:704-712"
+        ],
+        "observations": [
+          "Tests in tests/test_forecast_horizons.py use frequency-aligned monthly and annual dates, so they do not exercise this case."
+        ]
+      },
+      "confidence": 0.96,
+      "reproduction_strategy": {
+        "approach": "Call the calendar-horizon helper with an unaligned monthly observation.",
+        "steps": [
+          "Call _relative_periods('2024-01-15', 'MS', 1, 'month')."
+        ],
+        "expected_behavior": "Return 1: February 1 is one monthly forecast step within the requested calendar month."
+      },
+      "verification_status": "high_confidence",
+      "verification_evidence": "UNVERIFIABLE: unsupported verification capability (ReproductionError: target mismatch at verification_target.args/kwargs: reproduction arguments do not match target signature: too many positional arguments); no confirmation or repair authorized.",
+      "status": "high_confidence",
+      "reproduction": null,
+      "verification_spec": {
+        "kind": "expected_exception",
+        "args": [
+          "2024-01-15",
+          "MS",
+          1,
+          "month"
+        ],
+        "kwargs": {},
+        "expected_exception": "ValueError",
+        "expected": 1
+      },
+      "check": null,
+      "signals": [
+        {
+          "detector": "BugHunter",
+          "hypothesis": {
+            "suspected_file": "forecasting.py",
+            "suspected_symbol": "_future_dates",
+            "description": "Forecast dates can skip the first future period when the last observation is not on a pandas frequency boundary.",
+            "evidence": {
+              "summary": "The function always discards the first date returned by date_range, assuming it is the historical date. For an unaligned start, date_range begins at the next frequency boundary instead.",
+              "locations": [
+                "forecasting.py:386-387",
+                "forecasting.py:593-612",
+                "forecasting.py:704-712"
+              ],
+              "observations": [
+                "Tests in tests/test_forecast_horizons.py use frequency-aligned monthly and annual dates, so they do not exercise this case."
+              ]
+            },
+            "confidence": 0.96,
+            "reproduction_strategy": {
+              "approach": "Call the calendar-horizon helper with an unaligned monthly observation.",
+              "steps": [
+                "Call _relative_periods('2024-01-15', 'MS', 1, 'month')."
+              ],
+              "expected_behavior": "Return 1: February 1 is one monthly forecast step within the requested calendar month."
+            },
+            "category": "forecast_date_alignment",
+            "reproduction": null,
+            "verification_spec": {
+              "kind": "expected_exception",
+              "args": [
+                "2024-01-15",
+                "MS",
+                1,
+                "month"
+              ],
+              "kwargs": {},
+              "expected_exception": "ValueError",
+              "expected": 1
+            },
+            "root_cause_key": null,
+            "finding_kind": "bug",
+            "behavioral_failure": "With monthly history ending January 15, the first forecast date is March 1 rather than February 1. A one-month calendar horizon can incorrectly raise ValueError even though February 1 is within the horizon.",
+            "verification_plan": null,
+            "verification_unsupported": "UNVERIFIABLE: target mismatch at verification_target.args/kwargs: reproduction arguments do not match target signature: too many positional arguments",
+            "verification_target": null
+          },
+          "verification_status": "high_confidence",
+          "verification_evidence": "UNVERIFIABLE: unsupported verification capability (ReproductionError: target mismatch at verification_target.args/kwargs: reproduction arguments do not match target signature: too many positional arguments); no confirmation or repair authorized.",
+          "finding_id": "hunt_c5a92ee7ba9d1791"
+        }
+      ],
+      "root_cause_key": null,
+      "finding_kind": "bug",
+      "behavioral_failure": "With monthly history ending January 15, the first forecast date is March 1 rather than February 1. A one-month calendar horizon can incorrectly raise ValueError even though February 1 is within the horizon.",
+      "verification_plan": {
+        "schema_version": 1,
+        "file": "forecasting.py",
+        "symbol": "_future_dates",
+        "plan": null,
+        "source": "structured_spec_resolution",
+        "unsupported_reason": "UNVERIFIABLE: target mismatch at verification_target.args/kwargs: reproduction arguments do not match target signature: too many positional arguments",
+        "validation_error": {
+          "field": "verification_target.args/kwargs",
+          "failure_kind": "target mismatch",
+          "reason": "reproduction arguments do not match target signature: too many positional arguments"
+        }
+      },
+      "verification_state": "UNVERIFIABLE",
+      "repair_authorization": "BLOCKED",
+      "repairability": null
+    },
+    {
+      "finding_id": "hunt_7f58d63b32e2b349",
+      "file": "forecasting.py",
+      "symbol": "forecast_series",
+      "suspected_symbol": "forecast_series",
+      "verification_target": "forecast_series",
+      "category": "forecast_grouping",
+      "hypothesis": "An absolute target window is sized from the latest date across all groups, rather than allowing enough steps for each group's last observation.",
+      "evidence": {
+        "summary": "The grouped target-window path calculates periods using the global maximum historical date, passes that common period count to every group, and then clips each group's forecast to the target window.",
+        "locations": [
+          "forecasting.py:656-670",
+          "forecasting.py:677-695",
+          "forecasting.py:499-525"
+        ],
+        "observations": [
+          "_forecast_grouped starts each group's future dates at that group's own last date, which can be substantially earlier than the global maximum."
+        ]
+      },
+      "confidence": 0.91,
+      "reproduction_strategy": {
+        "approach": "Forecast two valid monthly groups with histories ending a year apart.",
+        "steps": [
+          "Provide four monthly observations for East ending April 2023 and four for West ending April 2024.",
+          "Request a target window covering May 2024.",
+          "Inspect forecast rows by group."
+        ],
+        "expected_behavior": "Both groups have forecast rows for May 2024, or the result explicitly reports that a group could not be forecast into the requested window."
+      },
+      "verification_status": "high_confidence",
+      "verification_evidence": "UNVERIFIABLE: No safe structured input or reproduction strategy is available; free-form reproduction text is never executed.",
+      "status": "high_confidence",
+      "reproduction": null,
+      "verification_spec": null,
+      "check": null,
+      "signals": [
+        {
+          "detector": "BugHunter",
+          "hypothesis": {
+            "suspected_file": "forecasting.py",
+            "suspected_symbol": "forecast_series",
+            "description": "An absolute target window is sized from the latest date across all groups, rather than allowing enough steps for each group's last observation.",
+            "evidence": {
+              "summary": "The grouped target-window path calculates periods using the global maximum historical date, passes that common period count to every group, and then clips each group's forecast to the target window.",
+              "locations": [
+                "forecasting.py:656-670",
+                "forecasting.py:677-695",
+                "forecasting.py:499-525"
+              ],
+              "observations": [
+                "_forecast_grouped starts each group's future dates at that group's own last date, which can be substantially earlier than the global maximum."
+              ]
+            },
+            "confidence": 0.91,
+            "reproduction_strategy": {
+              "approach": "Forecast two valid monthly groups with histories ending a year apart.",
+              "steps": [
+                "Provide four monthly observations for East ending April 2023 and four for West ending April 2024.",
+                "Request a target window covering May 2024.",
+                "Inspect forecast rows by group."
+              ],
+              "expected_behavior": "Both groups have forecast rows for May 2024, or the result explicitly reports that a group could not be forecast into the requested window."
+            },
+            "category": "forecast_grouping",
+            "reproduction": null,
+            "verification_spec": null,
+            "root_cause_key": null,
+            "finding_kind": "bug",
+            "behavioral_failure": "A group whose history ends earlier can have no forecast rows in the requested target window, despite having enough historical points to fit a model. Other groups appear in the same result.",
+            "verification_plan": null,
+            "verification_unsupported": null,
+            "verification_target": null
+          },
+          "verification_status": "high_confidence",
+          "verification_evidence": "UNVERIFIABLE: No safe structured input or reproduction strategy is available; free-form reproduction text is never executed.",
+          "finding_id": "hunt_7f58d63b32e2b349"
+        }
+      ],
+      "root_cause_key": null,
+      "finding_kind": "bug",
+      "behavioral_failure": "A group whose history ends earlier can have no forecast rows in the requested target window, despite having enough historical points to fit a model. Other groups appear in the same result.",
+      "verification_plan": {
+        "schema_version": 1,
+        "file": "forecasting.py",
+        "symbol": "forecast_series",
+        "plan": null,
+        "source": "legacy_model_planner",
+        "unsupported_reason": "UNVERIFIABLE: No safe structured input or reproduction strategy is available; free-form reproduction text is never executed.",
+        "planner_telemetry": {
+          "invoked": true,
+          "produced_valid_spec": false,
+          "spec_executed": false,
+          "confirmed_or_rejected": false,
+          "spec_failed_validation": false,
+          "remained_unverifiable": true
+        }
+      },
+      "verification_state": "UNVERIFIABLE",
+      "repair_authorization": "BLOCKED",
+      "repairability": null
+    },
+    {
+      "finding_id": "hunt_7bc10cceb5f897ac",
+      "file": "forecasting.py",
+      "symbol": "_resolve_columns",
+      "suspected_symbol": "_resolve_columns",
+      "verification_target": "_resolve_columns",
+      "category": "column_detection",
+      "hypothesis": "Automatic date detection can select a numeric measure column as the date before examining an actual date-string column.",
+      "evidence": {
+        "summary": "After checking datetime-typed columns, the detector calls pd.to_datetime on columns in order. Numeric values can be converted to timestamps, so the first numeric column is selected as the date and excluded from numeric-value detection.",
+        "locations": [
+          "forecasting.py:424-448",
+          "forecasting.py:648-651",
+          "forecasting.py:203-229"
+        ],
+        "observations": [
+          "The entry-point docstring says date and numeric columns are auto-detected when not supplied. _coerce_series repeats the same detection order."
+        ]
+      },
+      "confidence": 0.93,
+      "reproduction_strategy": {
+        "approach": "Use the documented automatic column detection with the measure column first.",
+        "steps": [
+          "Construct a dataframe whose columns, in order, are sales=[10,20,30,40] and date=['2024-01-01','2024-02-01','2024-03-01','2024-04-01'].",
+          "Call forecast_series on it without date_col or value_col."
+        ],
+        "expected_behavior": "Recognize date as the date column and sales as the numeric measure, then return a forecast."
+      },
+      "verification_status": "high_confidence",
+      "verification_evidence": "UNVERIFIABLE: No safe structured input or reproduction strategy is available; free-form reproduction text is never executed.",
+      "status": "high_confidence",
+      "reproduction": null,
+      "verification_spec": null,
+      "check": null,
+      "signals": [
+        {
+          "detector": "BugHunter",
+          "hypothesis": {
+            "suspected_file": "forecasting.py",
+            "suspected_symbol": "_resolve_columns",
+            "description": "Automatic date detection can select a numeric measure column as the date before examining an actual date-string column.",
+            "evidence": {
+              "summary": "After checking datetime-typed columns, the detector calls pd.to_datetime on columns in order. Numeric values can be converted to timestamps, so the first numeric column is selected as the date and excluded from numeric-value detection.",
+              "locations": [
+                "forecasting.py:424-448",
+                "forecasting.py:648-651",
+                "forecasting.py:203-229"
+              ],
+              "observations": [
+                "The entry-point docstring says date and numeric columns are auto-detected when not supplied. _coerce_series repeats the same detection order."
+              ]
+            },
+            "confidence": 0.93,
+            "reproduction_strategy": {
+              "approach": "Use the documented automatic column detection with the measure column first.",
+              "steps": [
+                "Construct a dataframe whose columns, in order, are sales=[10,20,30,40] and date=['2024-01-01','2024-02-01','2024-03-01','2024-04-01'].",
+                "Call forecast_series on it without date_col or value_col."
+              ],
+              "expected_behavior": "Recognize date as the date column and sales as the numeric measure, then return a forecast."
+            },
+            "category": "column_detection",
+            "reproduction": null,
+            "verification_spec": null,
+            "root_cause_key": null,
+            "finding_kind": "bug",
+            "behavioral_failure": "A valid two-column dataset with a numeric sales column first and a date-string column second raises 'Could not find a numeric column to forecast' instead of producing a forecast.",
+            "verification_plan": null,
+            "verification_unsupported": null,
+            "verification_target": null
+          },
+          "verification_status": "high_confidence",
+          "verification_evidence": "UNVERIFIABLE: No safe structured input or reproduction strategy is available; free-form reproduction text is never executed.",
+          "finding_id": "hunt_7bc10cceb5f897ac"
+        }
+      ],
+      "root_cause_key": null,
+      "finding_kind": "bug",
+      "behavioral_failure": "A valid two-column dataset with a numeric sales column first and a date-string column second raises 'Could not find a numeric column to forecast' instead of producing a forecast.",
+      "verification_plan": {
+        "schema_version": 1,
+        "file": "forecasting.py",
+        "symbol": "_resolve_columns",
+        "plan": null,
+        "source": "legacy_model_planner",
+        "unsupported_reason": "UNVERIFIABLE: No safe structured input or reproduction strategy is available; free-form reproduction text is never executed.",
+        "planner_telemetry": {
+          "invoked": true,
+          "produced_valid_spec": false,
+          "spec_executed": false,
+          "confirmed_or_rejected": false,
+          "spec_failed_validation": false,
+          "remained_unverifiable": true
+        }
+      },
+      "verification_state": "UNVERIFIABLE",
+      "repair_authorization": "BLOCKED",
+      "repairability": null
+    }
+  ],
+  "repairs": [],
+  "mode": "quick",
+  "strategies": [
+    "existing_checks",
+    "StaticAnalysis",
+    "BugHunter"
+  ],
+  "findings_path": "C:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\.aidebug\\hunt_findings_2026-09-29_224557_609262_8a56b6a40e6e.json",
+  "report_path": "C:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\.aidebug\\hunt_report_2026-09-29_224557_609262_8a56b6a40e6e.md",
+  "repair_errors": [],
+  "artifact_error": null,
+  "include_quality": false,
+  "metrics": {
+    "bugs_discovered": 3,
+    "bugs_confirmed": 0,
+    "bugs_repairable": 0,
+    "bugs_blocked_by_unspecified_expected_behavior": 0,
+    "bugs_unverifiable": 3,
+    "bugs_rejected": 0,
+    "non_bug_observations": 0
+  },
+  "bug_metrics": {
+    "bugs_discovered": 3,
+    "bugs_confirmed": 0,
+    "bugs_repairable": 0,
+    "bugs_blocked_by_unspecified_expected_behavior": 0,
+    "bugs_unverifiable": 3,
+    "bugs_rejected": 0,
+    "non_bug_observations": 0
+  },
+  "verification_metrics": {
+    "verification_coverage": 0.0,
+    "verification_plans_generated": 0,
+    "verification_plans_executed": 0,
+    "planner_invoked": 2,
+    "planner_produced_valid_spec": 0,
+    "planner_spec_executed": 0,
+    "planner_confirmed_or_rejected": 0,
+    "planner_spec_failed_validation": 0,
+    "planner_remained_unverifiable": 2,
+    "pinned_plans_reused": 0,
+    "plans_requiring_replanning": 0,
+    "unsupported_ast_capabilities": 3,
+    "unsupported_module_fragment_cases": 0,
+    "module_fragment_cases": 0,
+    "hidden_edge_case_findings": 0,
+    "verification_unsupported": 3
+  }
+}

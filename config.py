@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     summary_sample_rows: int = Field(default=15, alias="SUMMARY_SAMPLE_ROWS")
     max_sql_retries: int = Field(default=2, alias="MAX_SQL_RETRIES")
     max_forecast_retries: int = Field(default=1, alias="MAX_FORECAST_RETRIES")
+    max_evaluator_technical_retries: int = Field(default=1, ge=0, le=4, alias="MAX_EVALUATOR_TECHNICAL_RETRIES")
     max_evaluation_retries: int = Field(default=2, ge=0, le=4, alias="MAX_EVALUATION_RETRIES")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
     allowed_llm_columns: str = Field(default="", alias="ALLOWED_LLM_COLUMNS")

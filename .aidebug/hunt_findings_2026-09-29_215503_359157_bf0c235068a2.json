@@ -1,0 +1,444 @@
+{
+  "existing_checks": [
+    {
+      "name": "pytest",
+      "command": [
+        "C:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Scripts\\python.exe",
+        "-m",
+        "pytest"
+      ],
+      "returncode": 1,
+      "stdout": "============================= test session starts =============================\nplatform win32 -- Python 3.12.10, pytest-9.1.1, pluggy-1.6.0\nrootdir: C:\\Users\\saura\\AppData\\Local\\Temp\\aidebug-j3r8ssk1\\BIAssistant\nconfigfile: pytest.ini\ntestpaths: tests, test_accuracy.py\nplugins: anyio-4.12.1, langsmith-0.7.22\ncollected 127 items\n\ntests\\test_database_gateway.py EEEEEEEEEEEEEEEEEEEEEEEEEEEF              [ 22%]\ntests\\test_evaluation.py ...F..............FFFFFF...FFFFF                [ 47%]\ntests\\test_forecast_horizons.py .................                        [ 60%]\ntests\\test_forecast_routing.py ..                                        [ 62%]\ntests\\test_forecast_sql.py F                                             [ 62%]\ntests\\test_query_evidence.py .............                               [ 73%]\ntests\\test_query_planning.py .......F                                    [ 79%]\ntests\\test_sql_safety.py .......                                         [ 85%]\ntests\\test_telemetry.py ......                                           [ 89%]\ntest_accuracy.py .............                                           [100%]\n\n=================================== ERRORS ====================================\n________ ERROR at setup of test_schema_exposes_only_approved_metadata _________\n\ncls = <class '_pytest.runner.CallInfo'>\nfunc = <function call_and_report.<locals>.<lambda> at 0x000001E67FE6F240>\nwhen = 'setup'\nreraise = (<class '_pytest.outcomes.Exit'>, <class 'KeyboardInterrupt'>)\n\n    @classmethod\n    def from_call(\n        cls,\n        func: Callable[[], TResult],\n        when: Literal[\"collect\", \"setup\", \"call\", \"teardown\"],\n        reraise: type[BaseException] | tuple[type[BaseException], ...] | None = None,\n    ) -> CallInfo[TResult]:\n        \"\"\"Call func, wrapping the result in a CallInfo.\n    \n        :param func:\n            The function to call. Called without arguments.\n        :type func: Callable[[], _pytest.runner.TResult]\n        :param when:\n            The phase in which the function is called.\n        :param reraise:\n            Exception or exceptions that shall propagate if raised by the\n            function, instead of being wrapped in the CallInfo.\n        \"\"\"\n        excinfo = None\n        instant = timing.Instant()\n        try:\n>           result: TResult | None = func()\n                                     ^^^^^^\n\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\runner.py:361: \n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\runner.py:250: in <lambda>\n    lambda: runtest_hook(item=item, **kwds),\n            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\pluggy\\_hooks.py:512: in __call__\n    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\pluggy\\_manager.py:120: in _hookexec\n    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\logging.py:858: in pytest_runtest_setup\n    yield\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\capture.py:895: in pytest_runtest_setup\n    return (yield)\n            ^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\runner.py:170: in pytest_runtest_setup\n    item.session._setupstate.setup(item)\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\runner.py:536: in setup\n    col.setup()\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\python.py:1710: in setup\n    self._request._fillfixtures()\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\fixtures.py:806: in _fillfixtures\n    item.funcargs[argname] = self.getfixturevalue(argname)\n                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\fixtures.py:630: in getfixturevalue\n    fixturedef = self._get_active_fixturedef(argname)\n                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\fixtures.py:726: in _get_active_fixturedef\n    fixturedef.execute(request=subrequest)\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\fixtures.py:1181: in execute\n    fixturedef = request._get_active_fixturedef(argname)\n                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\fixtures.py:726: in _get_active_fixturedef\n    fixturedef.execute(request=subrequest)\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\fixtures.py:1232: in execute\n    result: FixtureValue = ihook.pytest_fixture_setup(\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\pluggy\\_hooks.py:512: in __call__\n    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\pluggy\\_manager.py:120: in _hookexec\n    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\pluggy\\_callers.py:53: in run_old_style_hookwrapper\n    return result.get_result()\n           ^^^^^^^^^^^^^^^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\pluggy\\_callers.py:38: in run_old_style_hookwrapper\n    res = yield\n          ^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\setuponly.py:36: in pytest_fixture_setup\n    return (yield)\n            ^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\fixtures.py:1328: in pytest_fixture_setup\n    result = call_fixture_func(fixturefunc, request, kwargs)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\fixtures.py:998: in call_fixture_func\n    fixture_result = next(generator)\n                     ^^^^^^^^^^^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\tmpdir.py:300: in tmp_path\n    path = _mk_tmp(request, tmp_path_factory)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\tmpdir.py:287: in _mk_tmp\n    return factory.mktemp(name, numbered=True)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\tmpdir.py:136: in mktemp\n    basename = self._ensure_relative_to_basetemp(basename)\n               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\tmpdir.py:117: in _ensure_relative_to_basetemp\n    if (self.getbasetemp() / basename).resolve().parent != self.getbasetemp():\n        ^^^^^^^^^^^^^^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\tmpdir.py:213: in getbasetemp\n    basetemp = make_numbered_dir_with_cleanup(\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\pathlib.py:420: in make_numbered_dir_with_cleanup\n    raise e\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\pathlib.py:401: in make_numbered_dir_with_cleanup\n    p = make_numbered_dir(root, prefix, mode)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\pathlib.py:228: in make_numbered_dir\n    max_existing = max(map(parse_num, find_suffixes(root, prefix)), default=-1)\n                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\pathlib.py:187: in extract_suffixes\n    for entry in iter:\n                 ^^^^\n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _\n\nroot = WindowsPath('C:/Users/saura/AppData/Local/Temp/pytest-of-saura')\nprefix = 'pytest-'\n\n    def find_prefixed(root: Path, prefix: str) -> Iterator[os.DirEntry[str]]:\n        \"\"\"Find all elements in root that begin with the prefix, case-insensitive.\"\"\"\n        l_prefix = prefix.lower()\n>       for x in os.scandir(root):\n                 ^^^^^^^^^^^^^^^^\nE       PermissionError: [WinError 5] Access is denied: 'C:\\\\Users\\\\saura\\\\AppData\\\\Local\\\\Temp\\\\pytest-of-saura'\n\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\pathlib.py:175: PermissionError\n_____________ ERROR at setup of test_select_and_cte_aggregations ______________\n\ncls = <class '_pytest.runner.CallInfo'>\nfunc = <function call_and_report.<locals>.<lambda> at 0x000001E67FEB53A0>\nwhen = 'setup'\nreraise = (<class '_pytest.outcomes.Exit'>, <class 'KeyboardInterrupt'>)\n\n    @classmethod\n    def from_call(\n        cls,\n        func: Callable[[], TResult],\n        when: Literal[\"collect\", \"setup\", \"call\", \"teardown\"],\n        reraise: type[BaseException] | tuple[type[BaseException], ...] | None = None,\n    ) -> CallInfo[TResult]:\n        \"\"\"Call func, wrapping the result in a CallInfo.\n    \n        :param func:\n            The function to call. Called without arguments.\n        :type func: Callable[[], _pytest.runner.TResult]\n        :param when:\n            The phase in which the function is called.\n        :param reraise:\n            Exception or exceptions that shall propagate if raised by the\n            function, instead of being wrapped in the CallInfo.\n        \"\"\"\n        excinfo = None\n        instant = timing.Instant()\n        try:\n>           result: TResult | None = func()\n                                     ^^^^^^\n\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\runner.py:361: \n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\runner.py:250: in <lambda>\n    lambda: runtest_hook(item=item, **kwds),\n            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\pluggy\\_hooks.py:512: in __call__\n    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\pluggy\\_manager.py:120: in _hookexec\n    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\logging.py:858: in pytest_runtest_setup\n    yield\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\capture.py:895: in pytest_runtest_setup\n    return (yield)\n            ^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\runner.py:170: in pytest_runtest_setup\n    item.session._setupstate.setup(item)\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\runner.py:536: in setup\n    col.setup()\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\python.py:1710: in setup\n    self._request._fillfixtures()\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\fixtures.py:806: in _fillfixtures\n    item.funcargs[argname] = self.ge",
+      "stderr": "",
+      "duration_seconds": 26.515999999945052,
+      "blocked_reason": null,
+      "status": "FAIL"
+    }
+  ],
+  "findings": [
+    {
+      "finding_id": "hunt_31fbd0df4f886ef2",
+      "file": "forecasting.py",
+      "symbol": "_resolve_columns",
+      "category": "date_detection",
+      "hypothesis": "Automatic date detection can mistake a numeric sales column for a date, causing a valid forecast dataset to be rejected.",
+      "evidence": {
+        "summary": "The fallback date search accepts the first column that pd.to_datetime can parse, without excluding numeric columns.",
+        "locations": [
+          "forecasting.py:424-448",
+          "forecasting.py:648"
+        ],
+        "observations": [
+          "pd.to_datetime accepts numeric values as timestamps.",
+          "The subsequent value search excludes the selected date column and requires a numeric dtype."
+        ]
+      },
+      "confidence": 0.95,
+      "reproduction_strategy": {
+        "approach": "Call the public forecaster with an otherwise valid four-row DataFrame.",
+        "steps": [
+          "Put numeric total_sales first and ISO date strings in a second column named period.",
+          "Call forecast_series without explicit date_col or value_col."
+        ],
+        "expected_behavior": "It detects period as the date column and total_sales as the value column."
+      },
+      "verification_status": "high_confidence",
+      "verification_evidence": "UNVERIFIABLE: No safe structured input or reproduction strategy is available; free-form reproduction text is never executed.",
+      "status": "high_confidence",
+      "reproduction": null,
+      "verification_spec": null,
+      "check": null,
+      "signals": [
+        {
+          "detector": "BugHunter",
+          "hypothesis": {
+            "suspected_file": "forecasting.py",
+            "suspected_symbol": "_resolve_columns",
+            "description": "Automatic date detection can mistake a numeric sales column for a date, causing a valid forecast dataset to be rejected.",
+            "evidence": {
+              "summary": "The fallback date search accepts the first column that pd.to_datetime can parse, without excluding numeric columns.",
+              "locations": [
+                "forecasting.py:424-448",
+                "forecasting.py:648"
+              ],
+              "observations": [
+                "pd.to_datetime accepts numeric values as timestamps.",
+                "The subsequent value search excludes the selected date column and requires a numeric dtype."
+              ]
+            },
+            "confidence": 0.95,
+            "reproduction_strategy": {
+              "approach": "Call the public forecaster with an otherwise valid four-row DataFrame.",
+              "steps": [
+                "Put numeric total_sales first and ISO date strings in a second column named period.",
+                "Call forecast_series without explicit date_col or value_col."
+              ],
+              "expected_behavior": "It detects period as the date column and total_sales as the value column."
+            },
+            "category": "date_detection",
+            "reproduction": null,
+            "verification_spec": null,
+            "root_cause_key": null,
+            "finding_kind": "bug",
+            "behavioral_failure": "If total_sales precedes a string-valued period column, the numeric values are accepted by pd.to_datetime as timestamps. The actual period column is then not recognized as the numeric value column, so forecast_series raises ValueError instead of forecasting.",
+            "verification_plan": null,
+            "verification_unsupported": null
+          },
+          "verification_status": "high_confidence",
+          "verification_evidence": "UNVERIFIABLE: No safe structured input or reproduction strategy is available; free-form reproduction text is never executed.",
+          "finding_id": "hunt_31fbd0df4f886ef2"
+        }
+      ],
+      "root_cause_key": null,
+      "finding_kind": "bug",
+      "behavioral_failure": "If total_sales precedes a string-valued period column, the numeric values are accepted by pd.to_datetime as timestamps. The actual period column is then not recognized as the numeric value column, so forecast_series raises ValueError instead of forecasting.",
+      "verification_plan": {
+        "schema_version": 1,
+        "file": "forecasting.py",
+        "symbol": "_resolve_columns",
+        "plan": null,
+        "source": "unresolved_without_model_plan",
+        "verifier": "restricted-ast-runtime",
+        "unsupported_reason": null
+      },
+      "verification_state": "UNVERIFIABLE",
+      "repair_authorization": "BLOCKED",
+      "repairability": null
+    },
+    {
+      "finding_id": "hunt_c778db7bf3af4e96",
+      "file": "forecasting.py",
+      "symbol": "_future_dates",
+      "category": "forecast_dates",
+      "hypothesis": "Future-date generation discards the first future frequency boundary when the last observation is not itself on that boundary.",
+      "evidence": {
+        "summary": "date_range already begins at the next valid MS boundary for an unaligned start; slicing off its first element skips that boundary.",
+        "locations": [
+          "forecasting.py:386-387",
+          "forecasting.py:605-612"
+        ],
+        "observations": [
+          "_relative_periods relies on _future_dates to count boundaries within the requested calendar horizon."
+        ]
+      },
+      "confidence": 0.98,
+      "reproduction_strategy": {
+        "approach": "Exercise the calendar-horizon helper with an unaligned monthly date.",
+        "steps": [
+          "Call _relative_periods('2024-01-15', 'MS', 1, 'month')."
+        ],
+        "expected_behavior": "Return 1 for the February 1 boundary rather than rejecting the horizon."
+      },
+      "verification_status": "high_confidence",
+      "verification_evidence": "UNVERIFIABLE: unsupported verification capability (ReproductionError: target mismatch at args/kwargs: reproduction arguments do not match target signature: too many positional arguments); no confirmation or repair authorized.",
+      "status": "high_confidence",
+      "reproduction": null,
+      "verification_spec": {
+        "kind": "expected_exception",
+        "args": [
+          "2024-01-15",
+          "MS",
+          1,
+          "month"
+        ],
+        "kwargs": {},
+        "expected_exception": "ValueError",
+        "expected": 1
+      },
+      "check": null,
+      "signals": [
+        {
+          "detector": "BugHunter",
+          "hypothesis": {
+            "suspected_file": "forecasting.py",
+            "suspected_symbol": "_future_dates",
+            "description": "Future-date generation discards the first future frequency boundary when the last observation is not itself on that boundary.",
+            "evidence": {
+              "summary": "date_range already begins at the next valid MS boundary for an unaligned start; slicing off its first element skips that boundary.",
+              "locations": [
+                "forecasting.py:386-387",
+                "forecasting.py:605-612"
+              ],
+              "observations": [
+                "_relative_periods relies on _future_dates to count boundaries within the requested calendar horizon."
+              ]
+            },
+            "confidence": 0.98,
+            "reproduction_strategy": {
+              "approach": "Exercise the calendar-horizon helper with an unaligned monthly date.",
+              "steps": [
+                "Call _relative_periods('2024-01-15', 'MS', 1, 'month')."
+              ],
+              "expected_behavior": "Return 1 for the February 1 boundary rather than rejecting the horizon."
+            },
+            "category": "forecast_dates",
+            "reproduction": null,
+            "verification_spec": {
+              "kind": "expected_exception",
+              "args": [
+                "2024-01-15",
+                "MS",
+                1,
+                "month"
+              ],
+              "kwargs": {},
+              "expected_exception": "ValueError",
+              "expected": 1
+            },
+            "root_cause_key": null,
+            "finding_kind": "bug",
+            "behavioral_failure": "For a monthly series ending January 15, the February 1 forecast date is skipped. A one-month horizon can consequently fail with a ValueError claiming it is shorter than one data period.",
+            "verification_plan": null,
+            "verification_unsupported": "UNVERIFIABLE: target mismatch at args/kwargs: reproduction arguments do not match target signature: too many positional arguments"
+          },
+          "verification_status": "high_confidence",
+          "verification_evidence": "UNVERIFIABLE: unsupported verification capability (ReproductionError: target mismatch at args/kwargs: reproduction arguments do not match target signature: too many positional arguments); no confirmation or repair authorized.",
+          "finding_id": "hunt_f3bf28694cb3208f"
+        }
+      ],
+      "root_cause_key": null,
+      "finding_kind": "bug",
+      "behavioral_failure": "For a monthly series ending January 15, the February 1 forecast date is skipped. A one-month horizon can consequently fail with a ValueError claiming it is shorter than one data period.",
+      "verification_plan": {
+        "schema_version": 1,
+        "file": "forecasting.py",
+        "symbol": "_future_dates",
+        "plan": null,
+        "source": "structured_spec_resolution",
+        "unsupported_reason": "UNVERIFIABLE: target mismatch at args/kwargs: reproduction arguments do not match target signature: too many positional arguments",
+        "validation_error": {
+          "field": "args/kwargs",
+          "failure_kind": "target mismatch",
+          "reason": "reproduction arguments do not match target signature: too many positional arguments"
+        }
+      },
+      "verification_state": "UNVERIFIABLE",
+      "repair_authorization": "BLOCKED",
+      "repairability": null
+    },
+    {
+      "finding_id": "hunt_b29f13869435120b",
+      "file": "forecasting.py",
+      "symbol": "forecast_series",
+      "category": "grouped_forecast",
+      "hypothesis": "An absolute target window is sized from the latest date across all groups, not from each group's latest date.",
+      "evidence": {
+        "summary": "The target-window horizon uses a single global last_hist, and _forecast_grouped applies the resulting periods to every group before clipping.",
+        "locations": [
+          "forecasting.py:658-670",
+          "forecasting.py:676-695",
+          "forecasting.py:499-520"
+        ],
+        "observations": [
+          "The grouped helper starts each group's future dates at that group's own last observation."
+        ]
+      },
+      "confidence": 0.93,
+      "reproduction_strategy": {
+        "approach": "Forecast a dated target window for groups with staggered history endpoints.",
+        "steps": [
+          "Supply two groups with at least four monthly observations each; end one in 2020 and the other in 2024.",
+          "Request a target window in 2025.",
+          "Inspect forecast rows by group."
+        ],
+        "expected_behavior": "Both groups have forecast rows covering the requested window, or the inability to do so is reported rather than silently omitting the older group."
+      },
+      "verification_status": "high_confidence",
+      "verification_evidence": "UNVERIFIABLE: No safe structured input or reproduction strategy is available; free-form reproduction text is never executed.",
+      "status": "high_confidence",
+      "reproduction": null,
+      "verification_spec": null,
+      "check": null,
+      "signals": [
+        {
+          "detector": "BugHunter",
+          "hypothesis": {
+            "suspected_file": "forecasting.py",
+            "suspected_symbol": "forecast_series",
+            "description": "An absolute target window is sized from the latest date across all groups, not from each group's latest date.",
+            "evidence": {
+              "summary": "The target-window horizon uses a single global last_hist, and _forecast_grouped applies the resulting periods to every group before clipping.",
+              "locations": [
+                "forecasting.py:658-670",
+                "forecasting.py:676-695",
+                "forecasting.py:499-520"
+              ],
+              "observations": [
+                "The grouped helper starts each group's future dates at that group's own last observation."
+              ]
+            },
+            "confidence": 0.93,
+            "reproduction_strategy": {
+              "approach": "Forecast a dated target window for groups with staggered history endpoints.",
+              "steps": [
+                "Supply two groups with at least four monthly observations each; end one in 2020 and the other in 2024.",
+                "Request a target window in 2025.",
+                "Inspect forecast rows by group."
+              ],
+              "expected_behavior": "Both groups have forecast rows covering the requested window, or the inability to do so is reported rather than silently omitting the older group."
+            },
+            "category": "grouped_forecast",
+            "reproduction": null,
+            "verification_spec": null,
+            "root_cause_key": null,
+            "finding_kind": "bug",
+            "behavioral_failure": "A group whose history ends substantially earlier than another group's can receive no forecast rows in the requested target window, even though it has enough observations to fit a model.",
+            "verification_plan": null,
+            "verification_unsupported": null
+          },
+          "verification_status": "high_confidence",
+          "verification_evidence": "UNVERIFIABLE: No safe structured input or reproduction strategy is available; free-form reproduction text is never executed.",
+          "finding_id": "hunt_b29f13869435120b"
+        }
+      ],
+      "root_cause_key": null,
+      "finding_kind": "bug",
+      "behavioral_failure": "A group whose history ends substantially earlier than another group's can receive no forecast rows in the requested target window, even though it has enough observations to fit a model.",
+      "verification_plan": {
+        "schema_version": 1,
+        "file": "forecasting.py",
+        "symbol": "forecast_series",
+        "plan": null,
+        "source": "unresolved_without_model_plan",
+        "verifier": "restricted-ast-runtime",
+        "unsupported_reason": null
+      },
+      "verification_state": "UNVERIFIABLE",
+      "repair_authorization": "BLOCKED",
+      "repairability": null
+    },
+    {
+      "finding_id": "hunt_a2e7d84e6b23376d",
+      "file": "accuracy.py",
+      "symbol": "_compute_metrics",
+      "category": "accuracy_metrics",
+      "hypothesis": "SMAPE omits perfectly predicted zero-valued points from its average.",
+      "evidence": {
+        "summary": "The SMAPE calculation averages only entries with nonzero denominators and returns NaN when none remain.",
+        "locations": [
+          "accuracy.py:90-96"
+        ],
+        "observations": [
+          "The module describes SMAPE as safer when actuals can be zero.",
+          "A point with both actual and predicted zero has zero forecasting error, but contributes nothing to the implemented average."
+        ]
+      },
+      "confidence": 0.91,
+      "reproduction_strategy": {
+        "approach": "Compare the metric with the per-point average, treating a matching zero pair as zero error.",
+        "steps": [
+          "Call _compute_metrics with actual=[0,100] and predicted=[0,90].",
+          "Compare its smape with the average of 0 and 200*10/190."
+        ],
+        "expected_behavior": "SMAPE is approximately 5.263%, not 10.526%."
+      },
+      "verification_status": "high_confidence",
+      "verification_evidence": "UNVERIFIABLE: Legacy planner failed strict validation (unsupported operation at assertions[0]: Unsupported verification plan assertion).",
+      "status": "high_confidence",
+      "reproduction": null,
+      "verification_spec": null,
+      "check": null,
+      "signals": [
+        {
+          "detector": "BugHunter",
+          "hypothesis": {
+            "suspected_file": "accuracy.py",
+            "suspected_symbol": "_compute_metrics",
+            "description": "SMAPE omits perfectly predicted zero-valued points from its average.",
+            "evidence": {
+              "summary": "The SMAPE calculation averages only entries with nonzero denominators and returns NaN when none remain.",
+              "locations": [
+                "accuracy.py:90-96"
+              ],
+              "observations": [
+                "The module describes SMAPE as safer when actuals can be zero.",
+                "A point with both actual and predicted zero has zero forecasting error, but contributes nothing to the implemented average."
+              ]
+            },
+            "confidence": 0.91,
+            "reproduction_strategy": {
+              "approach": "Compare the metric with the per-point average, treating a matching zero pair as zero error.",
+              "steps": [
+                "Call _compute_metrics with actual=[0,100] and predicted=[0,90].",
+                "Compare its smape with the average of 0 and 200*10/190."
+              ],
+              "expected_behavior": "SMAPE is approximately 5.263%, not 10.526%."
+            },
+            "category": "accuracy_metrics",
+            "reproduction": null,
+            "verification_spec": null,
+            "root_cause_key": null,
+            "finding_kind": "bug",
+            "behavioral_failure": "For actual=[0,100] and predicted=[0,90], the zero-error first point is excluded, doubling the reported average SMAPE. Perfect all-zero forecasts produce NaN SMAPE rather than zero.",
+            "verification_plan": null,
+            "verification_unsupported": null
+          },
+          "verification_status": "high_confidence",
+          "verification_evidence": "UNVERIFIABLE: Legacy planner failed strict validation (unsupported operation at assertions[0]: Unsupported verification plan assertion).",
+          "finding_id": "hunt_a2e7d84e6b23376d"
+        }
+      ],
+      "root_cause_key": null,
+      "finding_kind": "bug",
+      "behavioral_failure": "For actual=[0,100] and predicted=[0,90], the zero-error first point is excluded, doubling the reported average SMAPE. Perfect all-zero forecasts produce NaN SMAPE rather than zero.",
+      "verification_plan": {
+        "schema_version": 1,
+        "file": "accuracy.py",
+        "symbol": "_compute_metrics",
+        "plan": null,
+        "source": "legacy_model_planner",
+        "unsupported_reason": "UNVERIFIABLE: Legacy planner failed strict validation (unsupported operation at assertions[0]: Unsupported verification plan assertion).",
+        "validation_error": {
+          "field": "assertions[0]",
+          "failure_kind": "unsupported operation",
+          "reason": "Unsupported verification plan assertion"
+        }
+      },
+      "verification_state": "UNVERIFIABLE",
+      "repair_authorization": "BLOCKED",
+      "repairability": null
+    }
+  ],
+  "repairs": [],
+  "mode": "quick",
+  "strategies": [
+    "existing_checks",
+    "StaticAnalysis",
+    "BugHunter"
+  ],
+  "findings_path": "C:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\.aidebug\\hunt_findings_2026-09-29_215503_359157_bf0c235068a2.json",
+  "report_path": "C:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\.aidebug\\hunt_report_2026-09-29_215503_359157_bf0c235068a2.md",
+  "repair_errors": [],
+  "artifact_error": null,
+  "include_quality": false,
+  "metrics": {
+    "bugs_discovered": 4,
+    "bugs_confirmed": 0,
+    "bugs_repairable": 0,
+    "bugs_blocked_by_unspecified_expected_behavior": 0,
+    "bugs_unverifiable": 4,
+    "bugs_rejected": 0,
+    "non_bug_observations": 0
+  },
+  "bug_metrics": {
+    "bugs_discovered": 4,
+    "bugs_confirmed": 0,
+    "bugs_repairable": 0,
+    "bugs_blocked_by_unspecified_expected_behavior": 0,
+    "bugs_unverifiable": 4,
+    "bugs_rejected": 0,
+    "non_bug_observations": 0
+  },
+  "verification_metrics": {
+    "verification_coverage": 0.0,
+    "verification_plans_generated": 0,
+    "verification_plans_executed": 0,
+    "pinned_plans_reused": 0,
+    "plans_requiring_replanning": 0,
+    "unsupported_ast_capabilities": 4,
+    "unsupported_module_fragment_cases": 0,
+    "module_fragment_cases": 0,
+    "hidden_edge_case_findings": 0,
+    "verification_unsupported": 4
+  }
+}

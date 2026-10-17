@@ -40,6 +40,7 @@ jobs:
             app.py \
             bi.py \
             telemetry.py \
+            chart_parallel.py \
             forecasting.py \
             accuracy.py \
             config.py \

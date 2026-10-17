@@ -332,6 +332,8 @@ for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         if msg.get("forecast_used"):
             st.markdown('<div class="forecast-pill">🔮 FORECAST</div>', unsafe_allow_html=True)
+        if msg.get("evaluation_status") == "qualified":
+            st.warning("Automated verification was unavailable. This answer has not been independently verified.")
         st.markdown(msg["content"])
         render_metrics(msg.get("metrics"))
         if msg.get("sql") and not msg.get("forecast_used"):
@@ -340,6 +342,8 @@ for msg in st.session_state.messages:
         if msg.get("rows") and not msg.get("forecast_used"):
             with st.expander("Data", expanded=msg.get("evaluation_status") == "data_only"):
                 st.dataframe(msg["rows"], use_container_width=True)
+        if msg.get("chart_note"):
+            st.caption(msg["chart_note"])
         if msg.get("chart_spec"):
             render_chart(msg["chart_spec"])
         if msg.get("forecast_chart"):
@@ -371,6 +375,8 @@ if question:
 
         if forecast_used:
             st.markdown('<div class="forecast-pill">🔮 FORECAST</div>', unsafe_allow_html=True)
+        if result.get("evaluation", {}).get("status") == "qualified":
+            st.warning("Automated verification was unavailable. This answer has not been independently verified.")
         st.markdown(result["summary"])
         render_metrics(result.get("metrics"))
 
@@ -383,6 +389,8 @@ if question:
                 st.dataframe(result["rows"], use_container_width=True)
 
         # Forecast responses have their own combined history + forecast chart.
+        if result.get("chart_note") and not forecast_used:
+            st.caption(result["chart_note"])
         if result.get("chart_spec") and not forecast_used:
             render_chart(result["chart_spec"])
 
@@ -403,6 +411,7 @@ if question:
         "metrics": result.get("metrics"),
         "sql": result.get("sql"),
         "chart_spec": result.get("chart_spec"),
+        "chart_note": result.get("chart_note"),
         "rows": result.get("rows"),
         "evaluation_status": result.get("evaluation", {}).get("status"),
         "forecast_used": forecast_used,

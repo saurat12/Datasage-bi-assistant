@@ -101,3 +101,20 @@ Override/add exact model names with MODEL_PRICES_JSON in the runtime environment
 Unknown models have no guessed price. Docker users should set this in
 .env.docker (or the Compose runtime environment), then recreate the container.
 Cache hits record zero new tokens/cost rather than repeating the original usage.
+
+### Evaluator technical failures
+
+MAX_EVALUATOR_TECHNICAL_RETRIES (default 1, range 0–4) bounds additional answer
+review attempts per request independently of content revisions. Each graph visit
+makes one answer-evaluator call; it does not also perform an internal correction
+call. Retries preserve the summary, SQL and evidence. SQL review retains its existing
+bounded correction behavior.
+
+If technical retries are exhausted, SQL-approved output that passed deterministic
+statement checks is returned with status qualified and passed=false. The UI shows
+an explicit verification warning, including in chat history. Rows and forecasts
+remain available; qualified answers are not cached as verified. Execution failures,
+unapproved SQL, and known deterministic statement failures cannot qualify.
+Malformed-verdict diagnostics include at most 2,000 characters of the raw evaluator
+response in logs, never in user-facing errors. Technical retry budget is global to
+the request and is not reset by a content revision.

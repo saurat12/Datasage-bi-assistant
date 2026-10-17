@@ -1,0 +1,287 @@
+{
+  "existing_checks": [
+    {
+      "name": "pytest",
+      "command": [
+        "C:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Scripts\\python.exe",
+        "-m",
+        "pytest"
+      ],
+      "returncode": 1,
+      "stdout": "============================= test session starts =============================\nplatform win32 -- Python 3.12.10, pytest-9.1.1, pluggy-1.6.0\nrootdir: C:\\Users\\saura\\AppData\\Local\\Temp\\aidebug-cldf3wf5\\BIAssistant\nconfigfile: pytest.ini\ntestpaths: tests, test_accuracy.py\nplugins: anyio-4.12.1, langsmith-0.7.22\ncollected 127 items\n\ntests\\test_database_gateway.py EEEEEEEEEEEEEEEEEEEEEEEEEEEF              [ 22%]\ntests\\test_evaluation.py ...F..............FFFFFF...FFFFF                [ 47%]\ntests\\test_forecast_horizons.py .................                        [ 60%]\ntests\\test_forecast_routing.py ..                                        [ 62%]\ntests\\test_forecast_sql.py F                                             [ 62%]\ntests\\test_query_evidence.py .............                               [ 73%]\ntests\\test_query_planning.py .......F                                    [ 79%]\ntests\\test_sql_safety.py .......                                         [ 85%]\ntests\\test_telemetry.py ......                                           [ 89%]\ntest_accuracy.py .............                                           [100%]\n\n=================================== ERRORS ====================================\n________ ERROR at setup of test_schema_exposes_only_approved_metadata _________\n\ncls = <class '_pytest.runner.CallInfo'>\nfunc = <function call_and_report.<locals>.<lambda> at 0x0000015CDA68F240>\nwhen = 'setup'\nreraise = (<class '_pytest.outcomes.Exit'>, <class 'KeyboardInterrupt'>)\n\n    @classmethod\n    def from_call(\n        cls,\n        func: Callable[[], TResult],\n        when: Literal[\"collect\", \"setup\", \"call\", \"teardown\"],\n        reraise: type[BaseException] | tuple[type[BaseException], ...] | None = None,\n    ) -> CallInfo[TResult]:\n        \"\"\"Call func, wrapping the result in a CallInfo.\n    \n        :param func:\n            The function to call. Called without arguments.\n        :type func: Callable[[], _pytest.runner.TResult]\n        :param when:\n            The phase in which the function is called.\n        :param reraise:\n            Exception or exceptions that shall propagate if raised by the\n            function, instead of being wrapped in the CallInfo.\n        \"\"\"\n        excinfo = None\n        instant = timing.Instant()\n        try:\n>           result: TResult | None = func()\n                                     ^^^^^^\n\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\runner.py:361: \n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\runner.py:250: in <lambda>\n    lambda: runtest_hook(item=item, **kwds),\n            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\pluggy\\_hooks.py:512: in __call__\n    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\pluggy\\_manager.py:120: in _hookexec\n    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\logging.py:858: in pytest_runtest_setup\n    yield\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\capture.py:895: in pytest_runtest_setup\n    return (yield)\n            ^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\runner.py:170: in pytest_runtest_setup\n    item.session._setupstate.setup(item)\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\runner.py:536: in setup\n    col.setup()\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\python.py:1710: in setup\n    self._request._fillfixtures()\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\fixtures.py:806: in _fillfixtures\n    item.funcargs[argname] = self.getfixturevalue(argname)\n                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\fixtures.py:630: in getfixturevalue\n    fixturedef = self._get_active_fixturedef(argname)\n                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\fixtures.py:726: in _get_active_fixturedef\n    fixturedef.execute(request=subrequest)\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\fixtures.py:1181: in execute\n    fixturedef = request._get_active_fixturedef(argname)\n                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\fixtures.py:726: in _get_active_fixturedef\n    fixturedef.execute(request=subrequest)\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\fixtures.py:1232: in execute\n    result: FixtureValue = ihook.pytest_fixture_setup(\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\pluggy\\_hooks.py:512: in __call__\n    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\pluggy\\_manager.py:120: in _hookexec\n    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\pluggy\\_callers.py:53: in run_old_style_hookwrapper\n    return result.get_result()\n           ^^^^^^^^^^^^^^^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\pluggy\\_callers.py:38: in run_old_style_hookwrapper\n    res = yield\n          ^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\setuponly.py:36: in pytest_fixture_setup\n    return (yield)\n            ^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\fixtures.py:1328: in pytest_fixture_setup\n    result = call_fixture_func(fixturefunc, request, kwargs)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\fixtures.py:998: in call_fixture_func\n    fixture_result = next(generator)\n                     ^^^^^^^^^^^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\tmpdir.py:300: in tmp_path\n    path = _mk_tmp(request, tmp_path_factory)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\tmpdir.py:287: in _mk_tmp\n    return factory.mktemp(name, numbered=True)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\tmpdir.py:136: in mktemp\n    basename = self._ensure_relative_to_basetemp(basename)\n               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\tmpdir.py:117: in _ensure_relative_to_basetemp\n    if (self.getbasetemp() / basename).resolve().parent != self.getbasetemp():\n        ^^^^^^^^^^^^^^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\tmpdir.py:213: in getbasetemp\n    basetemp = make_numbered_dir_with_cleanup(\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\pathlib.py:420: in make_numbered_dir_with_cleanup\n    raise e\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\pathlib.py:401: in make_numbered_dir_with_cleanup\n    p = make_numbered_dir(root, prefix, mode)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\pathlib.py:228: in make_numbered_dir\n    max_existing = max(map(parse_num, find_suffixes(root, prefix)), default=-1)\n                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\pathlib.py:187: in extract_suffixes\n    for entry in iter:\n                 ^^^^\n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _\n\nroot = WindowsPath('C:/Users/saura/AppData/Local/Temp/pytest-of-saura')\nprefix = 'pytest-'\n\n    def find_prefixed(root: Path, prefix: str) -> Iterator[os.DirEntry[str]]:\n        \"\"\"Find all elements in root that begin with the prefix, case-insensitive.\"\"\"\n        l_prefix = prefix.lower()\n>       for x in os.scandir(root):\n                 ^^^^^^^^^^^^^^^^\nE       PermissionError: [WinError 5] Access is denied: 'C:\\\\Users\\\\saura\\\\AppData\\\\Local\\\\Temp\\\\pytest-of-saura'\n\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\pathlib.py:175: PermissionError\n_____________ ERROR at setup of test_select_and_cte_aggregations ______________\n\ncls = <class '_pytest.runner.CallInfo'>\nfunc = <function call_and_report.<locals>.<lambda> at 0x0000015CDA6D93A0>\nwhen = 'setup'\nreraise = (<class '_pytest.outcomes.Exit'>, <class 'KeyboardInterrupt'>)\n\n    @classmethod\n    def from_call(\n        cls,\n        func: Callable[[], TResult],\n        when: Literal[\"collect\", \"setup\", \"call\", \"teardown\"],\n        reraise: type[BaseException] | tuple[type[BaseException], ...] | None = None,\n    ) -> CallInfo[TResult]:\n        \"\"\"Call func, wrapping the result in a CallInfo.\n    \n        :param func:\n            The function to call. Called without arguments.\n        :type func: Callable[[], _pytest.runner.TResult]\n        :param when:\n            The phase in which the function is called.\n        :param reraise:\n            Exception or exceptions that shall propagate if raised by the\n            function, instead of being wrapped in the CallInfo.\n        \"\"\"\n        excinfo = None\n        instant = timing.Instant()\n        try:\n>           result: TResult | None = func()\n                                     ^^^^^^\n\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\runner.py:361: \n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\runner.py:250: in <lambda>\n    lambda: runtest_hook(item=item, **kwds),\n            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\pluggy\\_hooks.py:512: in __call__\n    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\pluggy\\_manager.py:120: in _hookexec\n    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\logging.py:858: in pytest_runtest_setup\n    yield\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\capture.py:895: in pytest_runtest_setup\n    return (yield)\n            ^^^^^\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\runner.py:170: in pytest_runtest_setup\n    item.session._setupstate.setup(item)\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\runner.py:536: in setup\n    col.setup()\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\python.py:1710: in setup\n    self._request._fillfixtures()\nC:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\Lib\\site-packages\\_pytest\\fixtures.py:806: in _fillfixtures\n    item.funcargs[argname] = self.ge",
+      "stderr": "",
+      "duration_seconds": 45.063000000081956,
+      "blocked_reason": null,
+      "status": "FAIL"
+    }
+  ],
+  "findings": [
+    {
+      "finding_id": "hunt_871f812e8693da38",
+      "file": "forecasting.py",
+      "symbol": "_future_dates",
+      "suspected_symbol": "_future_dates",
+      "verification_target": "_future_dates",
+      "category": "forecast_date_alignment",
+      "hypothesis": "Forecasts skip the first future date when the last historical date is not aligned with the inferred frequency. This can also make a valid calendar horizon appear too short to forecast.",
+      "evidence": {
+        "summary": "The date range starts at the last historical date, but pandas advances an unaligned start to the next frequency date; slicing off the first entry then discards that future date.",
+        "locations": [
+          "forecasting.py:386-387",
+          "forecasting.py:593-612",
+          "forecasting.py:704-710"
+        ],
+        "observations": [
+          "_infer_frequency can classify dates roughly a month apart as 'MS' without requiring month-start dates.",
+          "_relative_periods relies on _future_dates to count dates within the requested calendar horizon."
+        ]
+      },
+      "confidence": 0.96,
+      "reproduction_strategy": {
+        "approach": "Call the calendar-horizon helper with an unaligned monthly date.",
+        "steps": [
+          "Call _relative_periods('2024-01-15', 'MS', 1, 'month').",
+          "Observe that it raises ValueError rather than counting February 1."
+        ],
+        "expected_behavior": "Return 1: February 1 is the next monthly date and is within one month of January 15."
+      },
+      "verification_status": "high_confidence",
+      "verification_evidence": "UNVERIFIABLE: target mismatch at verification_target.args/kwargs: reproduction arguments do not match target signature: too many positional arguments",
+      "status": "high_confidence",
+      "reproduction": null,
+      "verification_spec": {
+        "kind": "expected_exception",
+        "args": [
+          "2024-01-15",
+          "MS",
+          1,
+          "month"
+        ],
+        "kwargs": {},
+        "expected_exception": "ValueError",
+        "expected": 1
+      },
+      "check": null,
+      "signals": [
+        {
+          "detector": "BugHunter",
+          "hypothesis": {
+            "suspected_file": "forecasting.py",
+            "suspected_symbol": "_future_dates",
+            "description": "Forecasts skip the first future date when the last historical date is not aligned with the inferred frequency. This can also make a valid calendar horizon appear too short to forecast.",
+            "evidence": {
+              "summary": "The date range starts at the last historical date, but pandas advances an unaligned start to the next frequency date; slicing off the first entry then discards that future date.",
+              "locations": [
+                "forecasting.py:386-387",
+                "forecasting.py:593-612",
+                "forecasting.py:704-710"
+              ],
+              "observations": [
+                "_infer_frequency can classify dates roughly a month apart as 'MS' without requiring month-start dates.",
+                "_relative_periods relies on _future_dates to count dates within the requested calendar horizon."
+              ]
+            },
+            "confidence": 0.96,
+            "reproduction_strategy": {
+              "approach": "Call the calendar-horizon helper with an unaligned monthly date.",
+              "steps": [
+                "Call _relative_periods('2024-01-15', 'MS', 1, 'month').",
+                "Observe that it raises ValueError rather than counting February 1."
+              ],
+              "expected_behavior": "Return 1: February 1 is the next monthly date and is within one month of January 15."
+            },
+            "category": "forecast_date_alignment",
+            "reproduction": null,
+            "verification_spec": {
+              "kind": "expected_exception",
+              "args": [
+                "2024-01-15",
+                "MS",
+                1,
+                "month"
+              ],
+              "kwargs": {},
+              "expected_exception": "ValueError",
+              "expected": 1
+            },
+            "root_cause_key": "forecasting._future_dates_unaligned_start_slice",
+            "finding_kind": "bug",
+            "behavioral_failure": "For monthly history ending January 15, the next monthly forecast date is March 1 rather than February 1. Requesting a one-month horizon raises ValueError even though February 1 falls within that horizon.",
+            "verification_plan": null,
+            "verification_unsupported": "UNVERIFIABLE: target mismatch at verification_target.args/kwargs: reproduction arguments do not match target signature: too many positional arguments",
+            "verification_target": null
+          },
+          "verification_status": "high_confidence",
+          "verification_evidence": "UNVERIFIABLE: target mismatch at verification_target.args/kwargs: reproduction arguments do not match target signature: too many positional arguments",
+          "finding_id": "hunt_871f812e8693da38"
+        }
+      ],
+      "root_cause_key": "forecasting._future_dates_unaligned_start_slice",
+      "finding_kind": "bug",
+      "behavioral_failure": "For monthly history ending January 15, the next monthly forecast date is March 1 rather than February 1. Requesting a one-month horizon raises ValueError even though February 1 falls within that horizon.",
+      "verification_plan": {
+        "schema_version": 1,
+        "file": "forecasting.py",
+        "symbol": "_future_dates",
+        "plan": null,
+        "source": "structured_spec_resolution",
+        "unsupported_reason": "UNVERIFIABLE: target mismatch at verification_target.args/kwargs: reproduction arguments do not match target signature: too many positional arguments",
+        "validation_error": {
+          "field": "verification_target.args/kwargs",
+          "failure_kind": "target mismatch",
+          "reason": "reproduction arguments do not match target signature: too many positional arguments"
+        }
+      },
+      "verification_state": "UNVERIFIABLE",
+      "repair_authorization": "BLOCKED",
+      "repairability": null
+    },
+    {
+      "finding_id": "hunt_de70665ecf26319f",
+      "file": "bi.py",
+      "symbol": "ask_bi_agent",
+      "suspected_symbol": "ask_bi_agent",
+      "verification_target": "ask_bi_agent",
+      "category": "resource_leak",
+      "hypothesis": "Expired cached responses are never removed, so successful requests with distinct questions accumulate indefinitely in the process-wide response cache.",
+      "evidence": {
+        "summary": "The cache checks TTL on lookup but only inserts entries; there is no expiration removal or size bound.",
+        "locations": [
+          "bi.py:1310",
+          "bi.py:1342-1347",
+          "bi.py:1408-1409",
+          "config.py:41"
+        ],
+        "observations": [
+          "An expired entry is treated as a miss but remains in _response_cache.",
+          "Each new verified question adds another response under its question text."
+        ]
+      },
+      "confidence": 0.93,
+      "reproduction_strategy": {
+        "approach": "Inspect cache size across distinct successful requests and TTL expiry.",
+        "steps": [
+          "Submit many distinct questions that produce verified responses.",
+          "Wait longer than CACHE_TTL_SECONDS without repeating those questions.",
+          "Inspect _response_cache; the expired entries remain resident."
+        ],
+        "expected_behavior": "Expired responses should not remain resident indefinitely."
+      },
+      "verification_status": "unconfirmed",
+      "verification_evidence": "Python source has a parse failure, but finding evidence does not identify that location; it cannot confirm this finding. SyntaxError: invalid syntax at bi.py:227:6.",
+      "status": "unconfirmed",
+      "reproduction": null,
+      "verification_spec": null,
+      "check": null,
+      "signals": [
+        {
+          "detector": "BugHunter",
+          "hypothesis": {
+            "suspected_file": "bi.py",
+            "suspected_symbol": "ask_bi_agent",
+            "description": "Expired cached responses are never removed, so successful requests with distinct questions accumulate indefinitely in the process-wide response cache.",
+            "evidence": {
+              "summary": "The cache checks TTL on lookup but only inserts entries; there is no expiration removal or size bound.",
+              "locations": [
+                "bi.py:1310",
+                "bi.py:1342-1347",
+                "bi.py:1408-1409",
+                "config.py:41"
+              ],
+              "observations": [
+                "An expired entry is treated as a miss but remains in _response_cache.",
+                "Each new verified question adds another response under its question text."
+              ]
+            },
+            "confidence": 0.93,
+            "reproduction_strategy": {
+              "approach": "Inspect cache size across distinct successful requests and TTL expiry.",
+              "steps": [
+                "Submit many distinct questions that produce verified responses.",
+                "Wait longer than CACHE_TTL_SECONDS without repeating those questions.",
+                "Inspect _response_cache; the expired entries remain resident."
+              ],
+              "expected_behavior": "Expired responses should not remain resident indefinitely."
+            },
+            "category": "resource_leak",
+            "reproduction": null,
+            "verification_spec": null,
+            "root_cause_key": "bi.ask_bi_agent_unbounded_expired_response_cache",
+            "finding_kind": "bug",
+            "behavioral_failure": "A long-running application retains the response dictionaries, including returned rows and forecast data, for every distinct verified question even after their TTL expires, causing unbounded memory growth.",
+            "verification_plan": null,
+            "verification_unsupported": null,
+            "verification_target": null
+          },
+          "verification_status": "unconfirmed",
+          "verification_evidence": "Python source has a parse failure, but finding evidence does not identify that location; it cannot confirm this finding. SyntaxError: invalid syntax at bi.py:227:6.",
+          "finding_id": "hunt_de70665ecf26319f"
+        }
+      ],
+      "root_cause_key": "bi.ask_bi_agent_unbounded_expired_response_cache",
+      "finding_kind": "bug",
+      "behavioral_failure": "A long-running application retains the response dictionaries, including returned rows and forecast data, for every distinct verified question even after their TTL expires, causing unbounded memory growth.",
+      "verification_plan": {
+        "schema_version": 1,
+        "file": "bi.py",
+        "symbol": "ask_bi_agent",
+        "source": "deterministic_verifier",
+        "verifier": "python-parse",
+        "capability": "parse_compile",
+        "plan": {
+          "kind": "python_syntax",
+          "line": 227,
+          "column": 6,
+          "message_contains": "invalid syntax"
+        }
+      },
+      "verification_state": "UNVERIFIABLE",
+      "repair_authorization": "BLOCKED",
+      "repairability": null
+    }
+  ],
+  "repairs": [],
+  "mode": "quick",
+  "strategies": [
+    "existing_checks",
+    "StaticAnalysis",
+    "BugHunter"
+  ],
+  "findings_path": "C:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\.aidebug\\hunt_findings_2026-10-02_202657_899985_dc1b082072b0.json",
+  "report_path": "C:\\Users\\saura\\OneDrive\\Desktop\\Langchain\\BIAssistant\\.aidebug\\hunt_report_2026-10-02_202657_899985_dc1b082072b0.md",
+  "repair_errors": [],
+  "artifact_error": null,
+  "include_quality": false,
+  "metrics": {
+    "bugs_discovered": 2,
+    "bugs_confirmed": 0,
+    "bugs_repairable": 0,
+    "bugs_blocked_by_unspecified_expected_behavior": 0,
+    "bugs_unverifiable": 2,
+    "bugs_rejected": 0,
+    "non_bug_observations": 0
+  },
+  "bug_metrics": {
+    "bugs_discovered": 2,
+    "bugs_confirmed": 0,
+    "bugs_repairable": 0,
+    "bugs_blocked_by_unspecified_expected_behavior": 0,
+    "bugs_unverifiable": 2,
+    "bugs_rejected": 0,
+    "non_bug_observations": 0
+  },
+  "verification_metrics": {
+    "verification_coverage": 0.5,
+    "verification_plans_generated": 1,
+    "verification_plans_executed": 0,
+    "cached_plan_conclusions": 0,
+    "structured_spec_conclusions": 0,
+    "reproduction_builder_conclusions": 0,
+    "pinned_plans_reused": 0,
+    "unsupported_ast_capabilities": 1,
+    "unsupported_module_fragment_cases": 0,
+    "module_fragment_cases": 0,
+    "hidden_edge_case_findings": 0,
+    "verification_unsupported": 1
+  }
+}

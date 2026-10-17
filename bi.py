@@ -14,9 +14,13 @@ from openai import OpenAI
 
 from telemetry import TrackedModel, tracked_call, measure_request, mark_cache_hit
 from config import get_settings
+from chart_parallel import chart_request, schedule_chart, chart_result
 from sql_safety import looks_like_future_filter, split_statements, validate_read_only_sql
 from database_gateway import DatabaseGateway
-from query_planning import forecast_history_sql
+from query_planning import (
+    forecast_history_sql, historical_monthly_order_count_sql,
+    requested_metric, metric_sql_issue,
+)
 from evaluation import (
     SQL_CHECKS, ANSWER_CHECKS, SQL_EVALUATOR_PROMPT, ANSWER_EVALUATOR_PROMPT,
     STRUCTURED_SUMMARY_PROMPT, parse_verdict, failed_verdict, build_evidence,
@@ -109,6 +113,9 @@ COLUMN RULES:
   COUNT(*) measures rows, not necessarily distinct orders. Quantity means SUM(quantity).
 - "monthly orders in <year>" means one order count per month in that year.
   Prefer a direct monthly GROUP BY rather than unnecessary nested aggregations.
+- Return only requested metrics and grouping fields. Do not add overall/annual
+  totals, percentages or extra metrics unless explicitly requested. This also
+  applies to revisions: remove unsupported prose rather than expanding query scope.
 - Always use SUM(total_sales) when the user asks for total sales, revenue, or sales figures
 - Never use SUM(sales) or SUM(total_sale) — the correct column is total_sales
 - Always use strftime('%Y-%m', order_date) for monthly aggregations
@@ -394,6 +401,9 @@ def generate_chart_spec(
     chart_data, was_downsampled = _downsample_for_chart(
         _safe_rows_for_llm(data, settings.chart_sample_rows)
     )
+    mark_type = _classify_chart_type(question, chart_data)
+    if mark_type is None:
+        logger.info("Chart type fallback to LLM: %r", question)
     columns = list(chart_data[0].keys())
     strict_note = ""
     if _retry:
@@ -405,7 +415,14 @@ def generate_chart_spec(
         )
 
     question_block = ""
-    if question:
+    if mark_type:
+        question_block = (
+            f"User's original question: {question!r}\n"
+            f'Use mark type "{mark_type}" for this chart. Do not choose a different mark type. '
+            'Still choose correct field encodings, a descriptive title, and assemble a complete '
+            'valid Vega-Lite v5 spec.'
+        )
+    elif question:
         question_block = f"""
 User's original question: "{question}"
 
@@ -503,6 +520,69 @@ _GROUP_KEYWORDS: List[tuple] = [
 ]
 
 
+def _classify_chart_type(question: str, data: list[dict]) -> Optional[str]:
+    """Choose a mark for clear intent or data shapes; defer ambiguous cases.
+
+    Rules are ordered so time intent wins over share, comparison and other
+    intents. Missing values do not determine a column's type.
+    """
+    rules = [
+        (re.compile(r"\btrend\b|\bover time\b|\bgrowth\b|\bchange\b|\bforecast\b|\bmonthly\b|\byearly\b", re.IGNORECASE), "line"),
+        (re.compile(r"\bpercentage of\b|\bproportion\b|\bbreakdown of total\b|\bwhat fraction\b", re.IGNORECASE), "arc"),
+        (re.compile(r"\bcompare\b|\bvs\b|\bby\s+\w+\b|\btop\s+\d+\b|\bwhich\s+(product|category|segment)\b", re.IGNORECASE), "bar"),
+        (re.compile(r"\brelationship between\b|\bcorrelation\b|\bdoes\s+\w+\s+affect\b", re.IGNORECASE), "point"),
+        (re.compile(r"\bdistribution of\b|\bhow are\b.*\bspread\b", re.IGNORECASE), "bar"),
+    ]
+    columns = list(dict.fromkeys(key for row in data for key in row))
+    values = {key: [row[key] for row in data if row.get(key) is not None]
+              for key in columns}
+    numeric = {key: bool(items) and all(isinstance(v, (int, float))
+               and not isinstance(v, bool) for v in items)
+               for key, items in values.items()}
+    def period_like(key):
+        if key.lower() in {"period", "month", "year", "date"}:
+            return True
+        items = values[key]
+        # Numeric measures must not be interpreted as nanosecond timestamps.
+        if not items or not all(isinstance(v, str) and
+                                re.search(r"[-/]|[A-Za-z]", v) for v in items):
+            return False
+        try:
+            return all(not pd.isna(pd.to_datetime(v, errors="coerce")) for v in items)
+        except (TypeError, ValueError, OverflowError):
+            return False
+
+    for pattern, mark in rules:
+        if pattern.search(question or ""):
+            if mark == "arc":
+                # A true category column: non-numeric AND not a date/period
+                # column. Without excluding period-like columns, a result
+                # like (period, region, total_sales) would pick "period" as
+                # the pie dimension just because it's the first string
+                # column, instead of "region".
+                category = next(
+                    (key for key in columns
+                     if values[key] and not numeric[key] and not period_like(key)),
+                    None,
+                )
+                if category is None:
+                    return None
+                count = len({json.dumps(v, sort_keys=True, default=str) for v in values[category]})
+                return "arc" if count <= 7 else "bar"
+            return mark
+
+    periods = [key for key in columns if period_like(key)]
+    if len(columns) == 2 and periods:
+        return "line"
+    if len(columns) == 3 and len(periods) == 1:
+        others = [key for key in columns if key not in periods]
+        if sum(numeric[key] for key in others) == 1 and all(values[key] for key in others):
+            return "line"
+    if len(columns) == 2 and sum(numeric.values()) == 1 and all(values.values()):
+        return "bar"
+    return None
+
+
 def _detect_group_dimension(question: str) -> Optional[str]:
     if not question:
         return None
@@ -573,6 +653,7 @@ class BIState(TypedDict, total=False):
     sql_evaluation: dict
     evaluation: dict
     evaluation_history: list
+    evaluator_technical_retry_count: int
     evaluation_retry_count: int
     evaluation_feedback: str
     evidence: dict
@@ -629,6 +710,10 @@ def sql_agent_node(state: BIState) -> BIState:
         planned_sql = forecast_history_sql(question, json.loads(APPROVED_SCHEMA))
         if planned_sql:
             return {**state, "sql": planned_sql, "sql_plan_verified": True, "error": None}
+    else:
+        planned_sql = historical_monthly_order_count_sql(question, json.loads(APPROVED_SCHEMA))
+        if planned_sql:
+            return {**state, "sql": planned_sql, "sql_plan_verified": True, "error": None}
 
     agent_input = question
     if retry_count > 0 and feedback:
@@ -639,6 +724,14 @@ def sql_agent_node(state: BIState) -> BIState:
             f"Regenerate a corrected SQL query that fixes this issue while "
             f"still answering the original question."
         )
+    metric = requested_metric(question)
+    if metric:
+        metric_expression = {
+            "order_count": "COUNT(DISTINCT order_id)",
+            "revenue": "SUM(total_sales)",
+            "quantity": "SUM(quantity)",
+        }[metric]
+        agent_input += f"\n\nRequired metric for this question: {metric_expression}."
 
     logger.info("SQL agent attempt=%d forecast=%s", retry_count + 1, forecast)
     try:
@@ -690,6 +783,10 @@ def critic_node(state: BIState) -> BIState:
         det_issues.append(f"Question implies a per-{group_col} breakdown; SQL must SELECT and GROUP BY {group_col}.")
     if re.search(r"sum\s*\(\s*(total_sale|sales)\s*\)", s_lower):
         det_issues.append("Uses SUM(sales) or SUM(total_sale) instead of SUM(total_sales).")
+    metric = requested_metric(question)
+    metric_issue = metric_sql_issue(metric, sql)
+    if metric_issue:
+        det_issues.append(metric_issue)
     if len(_split_statements(sql)) > 1:
         det_issues.append(
             "Query contains more than one SQL statement — sqlite only "
@@ -700,6 +797,7 @@ def critic_node(state: BIState) -> BIState:
         "question": question,
         "forecast_mode": forecast,
         "expected_group_dimension": group_col,
+        "requested_metric": metric,
         "deterministic_pre_check_issues": det_issues,
         "candidate_sql": sql,
         "approved_schema": json.loads(APPROVED_SCHEMA),
@@ -709,21 +807,28 @@ def critic_node(state: BIState) -> BIState:
     })
 
     try:
-        verdict = invoke_evaluator(
-            critic_llm, SQL_EVALUATOR_PROMPT + "\nApplicable rules:\n" + sql_review_rules(forecast),
-            json.loads(critic_input), SQL_CHECKS, {"sql_agent"},
-        ) if not state.get("sql_plan_verified") else {
-            "passed": True, "checks": {key: True for key in SQL_CHECKS},
-            "issues": [], "retry_target": None, "fix_instructions": "",
-            "source": "deterministic_forecast_history_plan",
-        }
+        if state.get("sql_plan_verified"):
+            verdict = {
+                "passed": True, "checks": {key: True for key in SQL_CHECKS},
+                "issues": [], "retry_target": None, "fix_instructions": "",
+                "source": ("deterministic_forecast_history_plan" if forecast
+                           else "deterministic_monthly_order_count_plan"),
+            }
+        elif metric_issue:
+            verdict = failed_verdict(SQL_CHECKS, metric_issue, "sql_agent")
+        else:
+            verdict = invoke_evaluator(
+                critic_llm, SQL_EVALUATOR_PROMPT + "\nApplicable rules:\n" + sql_review_rules(forecast),
+                json.loads(critic_input), SQL_CHECKS, {"sql_agent"},
+            )
     except Exception:
         logger.exception("SQL evaluation failed")
         verdict = failed_verdict(SQL_CHECKS, "SQL evaluator unavailable or returned an invalid verdict.", "sql_agent")
     if det_issues:
         verdict = {**verdict, "passed": False,
                    "checks": {**verdict["checks"], "rules_followed": False},
-                   "issues": verdict["issues"] + det_issues, "retry_target": "sql_agent",
+                   "issues": verdict["issues"] + [issue for issue in det_issues if issue not in verdict["issues"]],
+                   "retry_target": "sql_agent",
                    "fix_instructions": "; ".join(det_issues + [verdict["fix_instructions"]])}
     approved = verdict["passed"]
     reason = "; ".join(verdict["issues"])
@@ -765,6 +870,11 @@ def executor_node(state: BIState) -> BIState:
             raise ValueError("No valid SQL statement to execute.")
         rows = _run_sql(sql, forecast=state.get("forecast", False))
         logger.info("SQL execution completed rows=%d", len(rows))
+        if rows and state.get("critic_approved") and not state.get("forecast", False):
+            try:
+                schedule_chart(sql, rows, state.get("question"), generate_chart_spec)
+            except Exception:
+                logger.exception("Could not start speculative chart generation")
         # Persist the sanitized version so the SQL shown downstream (and
         # returned to the caller) matches what actually ran.
         return {**state, "sql": sql, "rows": rows, "error": None}
@@ -1158,12 +1268,31 @@ def answer_evaluation_node(state: BIState) -> BIState:
                     "question": state["question"], "executed_sql": state.get("sql"),
                     "evidence": state["evidence"], "statements": state["summary_statements"],
                     "forecast_requested": state.get("forecast", False),
-                }, ANSWER_CHECKS, {"sql_agent", "summary_agent"},
+                }, ANSWER_CHECKS, {"sql_agent", "summary_agent"}, max_attempts=1,
+                forecast_requested=state.get("forecast", False),
             )
             verdict = apply_answer_applicability(verdict, state.get("forecast", False))
     except Exception:
         logger.exception("Answer evaluation failed")
-        verdict = failed_verdict(ANSWER_CHECKS, "Answer evaluator unavailable or returned an invalid verdict.", "summary_agent")
+        technical_retries = state.get("evaluator_technical_retry_count", 0)
+        retry = technical_retries < settings.max_evaluator_technical_retries
+        eligible = state.get("critic_approved") is True and not issues
+        status = "technical_retry" if retry else ("qualified" if eligible else "data_only")
+        verdict = {"passed": False, "checks": {}, "status": status,
+                   "issues": ["Automated verification was unavailable; this answer has not been independently verified."],
+                   "retry_target": "answer_evaluator" if retry else None,
+                   "fix_instructions": "", "failure_kind": "evaluator_technical"}
+        return {**state, "evaluation": verdict,
+                "evaluator_technical_retry_count": technical_retries + int(retry),
+                "summary": state.get("summary") if status != "data_only" else data_only_summary(state),
+                "evaluation_history": state.get("evaluation_history", []) + [{"stage": "answer", **verdict}]}
+    # A reviewer that accepts question coverage but rejects prose/numbers must
+    # repair the narrative, not expand the query to justify unsupported claims.
+    if (not verdict["passed"] and verdict.get("retry_target") == "sql_agent"
+            and verdict["checks"].get("answers_question") is True):
+        verdict = {**verdict, "retry_target": "summary_agent",
+                   "fix_instructions": "Revise the summary using existing evidence only. "
+                   "Remove unsupported or unrequested claims. " + verdict["fix_instructions"]}
     retries = state.get("evaluation_retry_count", 0)
     status = "passed" if verdict["passed"] else (
         "retrying" if retries < settings.max_evaluation_retries else "blocked")
@@ -1189,9 +1318,22 @@ def answer_evaluation_node(state: BIState) -> BIState:
 
 def route_after_evaluation(state: BIState) -> str:
     verdict = state["evaluation"]
+    if verdict["status"] == "technical_retry":
+        return "answer_evaluator"
+    if verdict["status"] == "qualified":
+        return "viz"
     if verdict["status"] == "retrying":
         return verdict["retry_target"]
-    return "viz" if verdict["passed"] else "end"
+    if verdict["passed"]:
+        return "viz"
+    # Summary failure alone need not hide approved historical query results.
+    if (verdict["status"] == "data_only"
+            and verdict.get("retry_target") == "summary_agent"
+            and state.get("critic_approved") is True
+            and not state.get("review_fallback") and not state.get("error")
+            and not state.get("forecast") and state.get("rows")):
+        return "viz"
+    return "end"
 
 
 def viz_node(state: BIState) -> BIState:
@@ -1202,7 +1344,11 @@ def viz_node(state: BIState) -> BIState:
 
     rows = state.get("rows") or []
     question = state.get("question")
-    chart_spec, chart_note = generate_chart_spec(rows, question=question)
+    prepared = chart_result(state.get("sql"), rows)
+    chart_spec, chart_note = (prepared if prepared is not None else
+                             generate_chart_spec(rows, question=question))
+    if chart_spec and state.get("evaluation", {}).get("status") == "data_only":
+        chart_note = "Chart shows SQL-reviewed query results; automated review did not approve the written analysis."
     return {**state, "chart_spec": chart_spec, "chart_note": chart_note}
 
 
@@ -1293,6 +1439,7 @@ def _build_graph():
 
     graph.add_edge("summary_agent", "answer_evaluator")
     graph.add_conditional_edges("answer_evaluator", route_after_evaluation, {
+        "answer_evaluator": "answer_evaluator",
         "sql_agent": "sql_agent", "summary_agent": "summary_agent", "viz": "viz_agent", "end": END,
     })
     graph.add_edge("viz_agent", END)
@@ -1348,19 +1495,23 @@ def ask_bi_agent(question: str) -> dict:
 
         token = _request_id.set(str(uuid.uuid4()))
         try:
-            final_state = _compiled_graph.invoke(
-                {"question": question},
-                {"recursion_limit": (settings.max_evaluation_retries + 1)
-                 * (2 * MAX_RETRIES + MAX_FORECAST_RETRIES + 15) + 10},
-            )
+            with chart_request():
+                final_state = _compiled_graph.invoke(
+                    {"question": question},
+                    {"recursion_limit": (settings.max_evaluation_retries + 1)
+                     * (2 * MAX_RETRIES + MAX_FORECAST_RETRIES + 15) + 10
+                     + settings.max_evaluator_technical_retries},
+                )
         finally:
             _request_id.reset(token)
         evaluation = final_state.get("evaluation", {"passed": False, "status": "blocked"})
         verified = evaluation.get("passed") is True
+        qualified = evaluation.get("status") == "qualified"
         statistical_fallback = (evaluation.get("status") == "data_only"
+                                and final_state.get("forecast", False)
                                 and final_state.get("sql_plan_verified")
                                 and not final_state.get("forecast_error"))
-        forecast_result = final_state.get("forecast_result") if verified or statistical_fallback else None
+        forecast_result = final_state.get("forecast_result") if verified or qualified or statistical_fallback else None
 
         forecast_payload = None
         if final_state.get("forecast", False) and forecast_result is not None:
@@ -1397,7 +1548,7 @@ def ask_bi_agent(question: str) -> dict:
             "sql": final_state.get("sql"),
             "chart_spec": final_state.get("chart_spec"),
             "chart_note": final_state.get("chart_note"),
-            "rows": final_state.get("rows") if verified or evaluation.get("status") == "data_only" else [],
+            "rows": final_state.get("rows") if verified or qualified or evaluation.get("status") == "data_only" else [],
             "evaluation": evaluation,
             "sql_evaluation": final_state.get("sql_evaluation"),
             "evaluation_history": final_state.get("evaluation_history", []),
