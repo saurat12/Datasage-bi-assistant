@@ -292,6 +292,36 @@ require_authentication()
 # Session state
 # ---------------------------------------------------------------------------
 
+def _toggle_metrics(key):
+    st.session_state[key] = not st.session_state.get(key, False)
+
+
+def render_metrics(metrics):
+    if not metrics:
+        return
+    visibility_key = f"metrics_visible_{metrics['request_id']}"
+    visible = st.session_state.get(visibility_key, False)
+    st.button(
+        "Hide request details" if visible else "Show request details",
+        key=f"metrics_button_{metrics['request_id']}",
+        on_click=_toggle_metrics,
+        args=(visibility_key,),
+    )
+    if not visible:
+        return
+    with st.container():
+        st.write(f"Response time: {metrics['latency_seconds']:.2f} seconds")
+        st.write(f"Tokens: {metrics['input_tokens']:,} input / {metrics['output_tokens']:,} output")
+        cost = metrics.get('estimated_cost_usd')
+        st.write(f"Estimated API cost: ${cost:.6f}" if cost is not None else "Estimated API cost: unavailable (missing usage or pricing)")
+        st.write(f"Model calls: {metrics['model_calls']}")
+        if metrics.get('cache_hit'):
+            st.caption("Cached answer; no new API calls.")
+        if metrics.get('calls'):
+            st.dataframe(metrics['calls'], use_container_width=True)
+        st.caption("Estimates cover reported API usage only. Unreported SDK retries and infrastructure costs are excluded.")
+
+
 if "messages" not in st.session_state:
     st.session_state.messages = []
 # ---------------------------------------------------------------------------
@@ -302,13 +332,18 @@ for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         if msg.get("forecast_used"):
             st.markdown('<div class="forecast-pill">🔮 FORECAST</div>', unsafe_allow_html=True)
+        if msg.get("evaluation_status") == "qualified":
+            st.warning("Automated verification was unavailable. This answer has not been independently verified.")
         st.markdown(msg["content"])
+        render_metrics(msg.get("metrics"))
         if msg.get("sql") and not msg.get("forecast_used"):
             with st.expander("SQL Query"):
                 st.code(msg["sql"], language="sql")
         if msg.get("rows") and not msg.get("forecast_used"):
             with st.expander("Data", expanded=msg.get("evaluation_status") == "data_only"):
                 st.dataframe(msg["rows"], use_container_width=True)
+        if msg.get("chart_note"):
+            st.caption(msg["chart_note"])
         if msg.get("chart_spec"):
             render_chart(msg["chart_spec"])
         if msg.get("forecast_chart"):
@@ -340,7 +375,10 @@ if question:
 
         if forecast_used:
             st.markdown('<div class="forecast-pill">🔮 FORECAST</div>', unsafe_allow_html=True)
+        if result.get("evaluation", {}).get("status") == "qualified":
+            st.warning("Automated verification was unavailable. This answer has not been independently verified.")
         st.markdown(result["summary"])
+        render_metrics(result.get("metrics"))
 
         if result.get("sql") and not forecast_used:
             with st.expander("SQL Query"):
@@ -351,6 +389,8 @@ if question:
                 st.dataframe(result["rows"], use_container_width=True)
 
         # Forecast responses have their own combined history + forecast chart.
+        if result.get("chart_note") and not forecast_used:
+            st.caption(result["chart_note"])
         if result.get("chart_spec") and not forecast_used:
             render_chart(result["chart_spec"])
 
@@ -368,8 +408,10 @@ if question:
     st.session_state.messages.append({
         "role": "assistant",
         "content": result["summary"],
+        "metrics": result.get("metrics"),
         "sql": result.get("sql"),
         "chart_spec": result.get("chart_spec"),
+        "chart_note": result.get("chart_note"),
         "rows": result.get("rows"),
         "evaluation_status": result.get("evaluation", {}).get("status"),
         "forecast_used": forecast_used,

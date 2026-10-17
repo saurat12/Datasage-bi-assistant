@@ -3,9 +3,7 @@ name: DataSage CI
 on:
   push:
     branches:
-      - docker-deployment
-      - main
-      - eval-updates
+      - '**'
   pull_request:
     branches:
       - main
@@ -39,6 +37,8 @@ jobs:
           python -m compileall -q \
             app.py \
             bi.py \
+            telemetry.py \
+            chart_parallel.py \
             forecasting.py \
             accuracy.py \
             config.py \

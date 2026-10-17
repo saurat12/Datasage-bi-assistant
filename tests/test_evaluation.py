@@ -77,6 +77,65 @@ def test_contradictory_verdict_is_rejected():
         parse_verdict(json.dumps(verdict), ANSWER_CHECKS, {'summary_agent'})
 
 
+def test_historical_answer_ignores_forecast_caveat_before_validation():
+    raw = approved()
+    raw['checks']['forecast_caveats_present'] = False
+    calls = []
+    model = SimpleNamespace(invoke=lambda messages: (
+        calls.append(messages) or SimpleNamespace(content=json.dumps(raw))))
+
+    verdict = invoke_evaluator(model, 'Review', {}, ANSWER_CHECKS,
+                               {'summary_agent'}, forecast_requested=False)
+
+    assert len(calls) == 1
+    assert verdict['passed'] is True
+    assert verdict['checks']['forecast_caveats_present'] is True
+    assert verdict['not_applicable'] == ['forecast_caveats_present']
+    with pytest.raises(ValueError, match='Invalid evaluator verdict'):
+        invoke_evaluator(model, 'Review', {}, ANSWER_CHECKS,
+                         {'summary_agent'}, max_attempts=1, forecast_requested=True)
+
+
+def test_historical_caveat_only_rejection_becomes_approval():
+    raw = approved()
+    raw.update(passed=False, issues=['Forecast caveat missing'],
+               retry_target='summary_agent', fix_instructions='Add a caveat')
+    raw['checks']['forecast_caveats_present'] = False
+
+    verdict = parse_verdict(json.dumps(raw), ANSWER_CHECKS, {'summary_agent'},
+                            forecast_requested=False)
+
+    assert verdict['passed'] is True
+    assert verdict['issues'] == []
+    assert verdict['retry_target'] is None
+    assert verdict['fix_instructions'] == ''
+    assert verdict['not_applicable'] == ['forecast_caveats_present']
+
+
+def test_historical_override_preserves_unrelated_rejection_and_contradiction():
+    raw = approved()
+    raw['checks'].update(forecast_caveats_present=False, numbers_supported=False)
+    raw.update(passed=False, issues=['Wrong number'],
+               retry_target='summary_agent', fix_instructions='Correct the number')
+    verdict = parse_verdict(json.dumps(raw), ANSWER_CHECKS, {'summary_agent'},
+                            forecast_requested=False)
+    assert verdict['passed'] is False
+    assert verdict['issues'] == ['Wrong number']
+    assert verdict['retry_target'] == 'summary_agent'
+    raw['passed'] = True
+    with pytest.raises(ValueError, match='contradicts its checks'):
+        parse_verdict(json.dumps(raw), ANSWER_CHECKS, {'summary_agent'},
+                      forecast_requested=False)
+
+
+def test_historical_override_does_not_change_sql_reviews():
+    raw = approved(SQL_CHECKS)
+    raw['checks']['answers_question'] = False
+    with pytest.raises(ValueError, match='contradicts its checks'):
+        parse_verdict(json.dumps(raw), SQL_CHECKS, {'sql_agent'},
+                      forecast_requested=False)
+
+
 def test_malformed_review_is_repaired_without_changing_artifact():
     invalid = approved()
     invalid['passed'] = False
@@ -136,7 +195,7 @@ def answer_nodes(response, retries=1):
         'failed_verdict': failed_verdict, 'check_statements': check_statements,
         'parse_verdict': parse_verdict, 'json': json, 'invoke_evaluator': invoke_evaluator,
         'apply_answer_applicability': apply_answer_applicability,
-        'settings': SimpleNamespace(max_evaluation_retries=retries),
+        'settings': SimpleNamespace(max_evaluation_retries=retries, max_evaluator_technical_retries=1),
         'critic_llm': SimpleNamespace(invoke=lambda messages: SimpleNamespace(content=json.dumps(response))),
     })
 
@@ -170,10 +229,26 @@ def test_sql_retry_clears_stale_forecast_and_keeps_global_budget():
     assert result['critic_reason'] == 'Wrong metric.'
 
 
-def test_malformed_evaluator_fails_closed():
+def test_malformed_evaluator_retries_unchanged_then_qualifies():
+    nodes = answer_nodes({'passed': 'true'}, retries=0)
+    current = {**state(), 'critic_approved': True, 'rows': [{'revenue': 10}]}
+    result = nodes['answer_evaluation_node'](current)
+    assert result['evaluation']['status'] == 'technical_retry'
+    assert nodes['route_after_evaluation'](result) == 'answer_evaluator'
+    final = nodes['answer_evaluation_node'](result)
+    assert final['evaluation']['status'] == 'qualified'
+    assert final['evaluation']['passed'] is False
+    assert nodes['route_after_evaluation'](final) == 'viz'
+    for key in ('summary', 'sql', 'rows', 'summary_statements'):
+        assert final[key] == current[key]
+    assert final.get('evaluation_retry_count', 0) == 0
+
+
+def test_technical_failure_without_sql_approval_does_not_qualify():
     nodes = answer_nodes({'passed': 'true'}, retries=0)
     result = nodes['answer_evaluation_node'](state())
-    assert result['evaluation']['status'] == 'data_only'
+    final = nodes['answer_evaluation_node'](result)
+    assert final['evaluation']['status'] == 'data_only'
 
 
 def test_verified_answer_proceeds_to_visualization():
@@ -256,6 +331,7 @@ def test_real_graph_revises_summary_before_visualization():
 
 def test_sql_evaluation_receives_schema_and_fails_closed_on_outage():
     from evaluation import SQL_EVALUATOR_PROMPT
+    from query_planning import requested_metric, metric_sql_issue
     seen = []
 
     def unavailable(messages):
@@ -270,6 +346,7 @@ def test_sql_evaluation_receives_schema_and_fails_closed_on_outage():
         'APPROVED_SCHEMA': '{"orders": {"total_sales": "REAL"}}',
         'json': json, 're': re, 'failed_verdict': failed_verdict, 'parse_verdict': parse_verdict,
         '_split_statements': lambda sql: [sql],
+        'requested_metric': requested_metric, 'metric_sql_issue': metric_sql_issue,
         'critic_llm': SimpleNamespace(invoke=unavailable),
     })
     result = nodes['critic_node']({'question': 'total sales', 'sql': 'SELECT SUM(total_sales) FROM orders'})
@@ -306,3 +383,50 @@ def test_sql_schema_is_reference_not_output_template(forecast):
     prompt = nodes['_build_sql_prompt'](forecast)
     assert prompt.index('</approved_schema>') < prompt.index('OUTPUT FORMAT:')
     assert prompt.endswith('Do not append schema metadata, explanations, or other text after the SQL.')
+
+
+def test_narrative_failure_does_not_rewrite_approved_sql():
+    verdict = failed_verdict(ANSWER_CHECKS, 'Unsupported yearly total in prose.', 'sql_agent')
+    verdict['checks']['answers_question'] = True
+    nodes = answer_nodes(verdict)
+    current = {**state(), 'critic_approved': True, 'rows': [{'revenue': 10}]}
+    result = nodes['answer_evaluation_node'](current)
+    assert nodes['route_after_evaluation'](result) == 'summary_agent'
+    assert result['sql'] == current['sql'] and result['rows'] == current['rows']
+
+
+@pytest.mark.parametrize('changes, expected', [
+    ({}, 'viz'),
+    ({'critic_approved': False}, 'end'),
+    ({'review_fallback': True}, 'end'),
+    ({'error': 'Execution failed'}, 'end'),
+    ({'forecast': True}, 'end'),
+    ({'rows': []}, 'end'),
+    ({'evaluation': {'passed': False, 'status': 'data_only', 'retry_target': 'sql_agent'}}, 'end'),
+])
+def test_chart_after_summary_failure_requires_approved_results(changes, expected):
+    nodes = answer_nodes(approved())
+    current = {'critic_approved': True, 'rows': [{'period': '2016-01', 'monthly_orders': 10}],
+               'evaluation': {'passed': False, 'status': 'data_only', 'retry_target': 'summary_agent'}}
+    assert nodes['route_after_evaluation']({**current, **changes}) == expected
+
+
+def test_technical_retry_can_recover_without_summary_revision():
+    nodes = answer_nodes({'passed': 'true'})
+    current = {**state(), 'critic_approved': True}
+    result = nodes['answer_evaluation_node'](current)
+    nodes['critic_llm'] = SimpleNamespace(invoke=lambda messages: SimpleNamespace(content=json.dumps(approved())))
+    final = nodes['answer_evaluation_node'](result)
+    assert final['evaluation']['passed']
+    assert final['summary'] == current['summary']
+    assert final.get('evaluation_retry_count', 0) == 0
+
+
+def test_invalid_evaluator_diagnostic_is_bounded_and_single_attempt():
+    calls = []
+    raw = 'invalid verdict ' + 'x' * 5000
+    model = SimpleNamespace(invoke=lambda messages: (calls.append(messages) or SimpleNamespace(content=raw)))
+    with pytest.raises(ValueError, match='raw_response=') as exc:
+        invoke_evaluator(model, 'review', {}, ANSWER_CHECKS, {'summary_agent'}, max_attempts=1)
+    assert len(calls) == 1
+    assert len(str(exc.value)) < 2300

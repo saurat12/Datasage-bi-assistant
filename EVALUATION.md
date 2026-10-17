@@ -81,3 +81,40 @@ forecast series. The current live cases cover historical queries; forecast
 evidence and routing have automated regression coverage, but there is no live
 forecast quality benchmark yet. Record model/version and compare reports across
 changes; never treat a judge agreeing with itself as ground truth.
+
+## Request metrics
+
+Each answer includes a Request details expander with wall-clock response time,
+reported input/output tokens, model call timings, cache status and estimated USD
+API cost. Metrics are retained in chat history and logged as request_metrics JSON.
+All application-level LLM retries, including evaluator and chart retries, are
+counted. SDK-internal retry counts and usage not returned by the provider cannot
+be measured; missing usage/pricing makes the total cost unavailable. This is not
+an invoice or infrastructure cost estimate. Response latency includes database
+and forecasting work; the call table measures model calls only.
+
+Default standard pricing for gpt-4o-mini and gpt-4o-mini-2024-07-18 was checked
+2026-09-20 at https://developers.openai.com/api/docs/models/gpt-4o-mini:
+USD per million tokens: input 0.15, cached input 0.075, output 0.60.
+Override/add exact model names with MODEL_PRICES_JSON in the runtime environment:
+`{"gpt-4o-mini": [0.15, 0.075, 0.60]}`.
+Unknown models have no guessed price. Docker users should set this in
+.env.docker (or the Compose runtime environment), then recreate the container.
+Cache hits record zero new tokens/cost rather than repeating the original usage.
+
+### Evaluator technical failures
+
+MAX_EVALUATOR_TECHNICAL_RETRIES (default 1, range 0–4) bounds additional answer
+review attempts per request independently of content revisions. Each graph visit
+makes one answer-evaluator call; it does not also perform an internal correction
+call. Retries preserve the summary, SQL and evidence. SQL review retains its existing
+bounded correction behavior.
+
+If technical retries are exhausted, SQL-approved output that passed deterministic
+statement checks is returned with status qualified and passed=false. The UI shows
+an explicit verification warning, including in chat history. Rows and forecasts
+remain available; qualified answers are not cached as verified. Execution failures,
+unapproved SQL, and known deterministic statement failures cannot qualify.
+Malformed-verdict diagnostics include at most 2,000 characters of the raw evaluator
+response in logs, never in user-facing errors. Technical retry budget is global to
+the request and is not reset by a content revision.
