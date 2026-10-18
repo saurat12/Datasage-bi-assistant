@@ -4,6 +4,9 @@ Forecasting module for DataSage.
 Takes a time-series dataframe and produces forecast values with confidence
 intervals. Uses Exponential Smoothing (ETS / Holt-Winters)
 as the primary model with an ARIMA fallback for short or irregular series.
+ETS and naive-drift bounds use a residual-scale approximation that grows with
+the square root of the horizon; ARIMA uses its native 95% model interval.
+These interval methods have not been calibrated to a common coverage target.
 """
 
 from __future__ import annotations
@@ -38,11 +41,16 @@ class ForecastResult:
 
 _FORECAST_KEYWORDS = [
     "forecast", "forecasting", "predict", "prediction", "projection",
-    "project ", "projected", "expected", "estimate next",
+    "projected", "expected", "estimate next",
     "what will", "what's next", "future", "outlook", "trend going forward",
     "next week", "next month", "next quarter", "next year",
     "coming weeks", "coming months", "coming quarter",
 ]
+
+# This vocabulary is a dataset-specific heuristic, not a general intent model.
+_PROJECT_METRICS = {'revenue', 'sales', 'orders', 'growth', 'total', 'demand',
+                    'profit', 'quantity'}
+_PROJECT_WORD = re.compile(r'\bproject\b', re.IGNORECASE)
 
 _HORIZON_PATTERN = re.compile(
     r"next\s+(?:(\d+)\s+)?(days?|weeks?|months?|quarters?|years?)\b",
@@ -87,6 +95,16 @@ def detect_forecast_intent(question: str) -> bool:
     q = question.lower()
     if any(kw in q for kw in _FORECAST_KEYWORDS):
         return True
+    for match in _PROJECT_WORD.finditer(question):
+        following = re.findall(r'\b\w+\b', question[match.end():])[:4]
+        # Metric context wins even when a time marker such as Q4 is capitalized.
+        if any(word.lower() in _PROJECT_METRICS for word in following):
+            return True
+        if re.search(r'\b(?:will|to)\s+$', question[:match.start()], re.IGNORECASE):
+            return True
+        # A capitalized following word is likely a project name.
+        if following and following[0][0].isupper():
+            continue
     if _HORIZON_PATTERN.search(q):
         return True
     return False
@@ -281,7 +299,7 @@ def _fit_and_forecast(
     then to a naive drift model.
 
     The grid covers:
-      - trend: additive (linear) vs damped
+      - trend: none vs additive (linear) vs damped
       - seasonality: additive vs multiplicative
     Multiplicative requires strictly positive data and is skipped otherwise.
 
@@ -301,16 +319,19 @@ def _fit_and_forecast(
         # Multiplicative seasonality only makes sense for strictly positive data.
         if use_seasonal:
             candidates = [
+                (None, "add", False),
                 ("add", "add", False),
                 ("add", "add", True),
             ]
             if all_positive:
                 candidates.extend([
+                    (None, "mul", False),
                     ("add", "mul", False),
                     ("add", "mul", True),
                 ])
         else:
             candidates = [
+                (None, None, False),
                 ("add", None, False),
                 ("add", None, True),
             ]
@@ -331,9 +352,11 @@ def _fit_and_forecast(
                 aic = float(fit.aic) if np.isfinite(fit.aic) else float("inf")
                 if best is None or aic < best[0]:
                     seasonal_label = seasonal or "none"
-                    damped_label = "damped" if damped else "linear"
+                    trend_label = "no trend" if trend is None else (
+                        "damped trend" if damped else "linear trend"
+                    )
                     label = (
-                        f"ETS ({damped_label} trend, {seasonal_label} seasonality"
+                        f"ETS ({trend_label}, {seasonal_label} seasonality"
                         + (f", period={seasonal_period}" if seasonal else "")
                         + ")"
                     )
@@ -381,6 +404,12 @@ def _fit_and_forecast(
     steps = np.arange(1, periods + 1)
     band = 1.96 * sigma * np.sqrt(steps)
     return point, point - band, point + band, "Naive drift"
+
+
+def _model_warnings(methods: list[str], seasonal_period: int) -> list[str]:
+    if seasonal_period > 1 and any(method.startswith('ARIMA(') for method in methods):
+        return ["A nonseasonal ARIMA fallback was used; recurring seasonal patterns may not be captured."]
+    return []
 
 
 def _future_dates(last_date: pd.Timestamp, freq: str, periods: int) -> pd.DatetimeIndex:
@@ -550,6 +579,7 @@ def _forecast_grouped(
             "group_col": group_col,
             "skipped_groups": skipped,
             "horizon_label": horizon_label,
+            "warnings": _model_warnings(methods_used, seasonal_period),
         },
     )
 
@@ -707,6 +737,7 @@ def forecast_series(
     point, lower, upper, method = _fit_and_forecast(
         history["value"], periods=periods, seasonal_period=seasonal_period
     )
+    model_warnings = _model_warnings([method], seasonal_period)
     future_index = _future_dates(history["date"].iloc[-1], freq, periods)
     forecast_df = pd.DataFrame(
         {"date": future_index, "value": point, "lower": lower, "upper": upper}
@@ -721,7 +752,8 @@ def forecast_series(
             forecast=clipped,
             method=method,
             meta={"freq": freq, "seasonal_period": seasonal_period,
-                  "periods": periods, "target_window": target_label},
+                  "periods": periods, "target_window": target_label,
+                  "warnings": model_warnings},
         )
 
     return ForecastResult(
@@ -729,5 +761,5 @@ def forecast_series(
         forecast=forecast_df,
         method=method,
         meta={"freq": freq, "seasonal_period": seasonal_period, "periods": periods,
-              "horizon_label": horizon_label},
+              "horizon_label": horizon_label, "warnings": model_warnings},
     )

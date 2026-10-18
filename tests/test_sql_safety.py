@@ -12,6 +12,9 @@ def test_allows_select_and_cte():
     "DELETE FROM orders",
     "SELECT 1; DROP TABLE orders",
     "PRAGMA table_info(orders)",
+    "SELECT * FROM pragma_table_info('orders')",
+    "SELECT * FROM pragma_index_list('orders')",
+    "SELECT load_extension('x')",
     "ATTACH DATABASE 'x.db' AS x",
 ])
 def test_blocks_unsafe_sql(sql):
@@ -21,6 +24,12 @@ def test_blocks_unsafe_sql(sql):
 
 def test_semicolon_inside_literal_is_not_a_second_statement():
     assert split_statements("SELECT 'a;b' AS value;") == ["SELECT 'a;b' AS value"]
+
+
+def test_ordinary_identifier_with_pragma_prefix_is_allowed():
+    assert validate_read_only_sql('SELECT pragmatic_approach FROM orders') == (
+        'SELECT pragmatic_approach FROM orders'
+    )
 
 
 def test_execution_cap_wraps_query():
