@@ -5,7 +5,7 @@ import sqlite3
 
 from query_planning import (
     forecast_history_sql, historical_monthly_order_count_sql,
-    requested_metric, metric_sql_issue,
+    metric_sql_issue,
 )
 from forecasting import detect_forecast_intent, extract_target_window
 
@@ -13,52 +13,51 @@ from forecasting import detect_forecast_intent, extract_target_window
 SCHEMA = {'orders': {'order_date': 'DATE', 'order_id': 'TEXT', 'total_sales': 'REAL'}}
 
 
-@pytest.mark.parametrize(('question', 'metric'), [
-    ('What is the monthly order total in 2014?', 'order_count'),
-    ('How many orders were placed in East in 2017?', 'order_count'),
-    ('Show total sales by region in 2017', 'revenue'),
-    ('What is the quantity sold each month?', 'quantity'),
-    ('Compare revenue and order counts by region', None),
-    ('Show all orders in 2017', None),
-    ('What is the average order value?', None),
-    ('What is the total order value by region?', None),
+@pytest.mark.parametrize(('column', 'sql', 'mismatch'), [
+    ('order_id', 'SELECT region, SUM(total_sales) FROM orders GROUP BY region', True),
+    ('order_id', 'SELECT region, COUNT(DISTINCT o.order_id) FROM orders o GROUP BY region', False),
+    ('total_sales', 'SELECT COUNT(DISTINCT order_id) FROM orders', True),
+    ('quantity', 'SELECT SUM(quantity) FROM orders', False),
+    (None, 'SELECT SUM(total_sales) FROM orders', False),
 ])
-def test_metric_intent_only_when_single_aggregate_is_clear(question, metric):
-    assert requested_metric(question) == metric
+def test_metric_contract_catches_clear_substitutions(column, sql, mismatch):
+    assert bool(metric_sql_issue(column, sql)) is mismatch
 
 
-def test_metric_contract_catches_clear_substitutions_but_allows_matching_sql():
-    question = 'What is the number of orders by region in 2017?'
-    metric = requested_metric(question)
-    assert metric_sql_issue(metric, 'SELECT region, SUM(total_sales) FROM orders GROUP BY region')
-    assert metric_sql_issue(metric, 'SELECT region, COUNT(DISTINCT o.order_id) FROM orders o GROUP BY region') is None
-    assert metric_sql_issue('revenue', 'SELECT COUNT(DISTINCT order_id) FROM orders')
-    assert metric_sql_issue('quantity', 'SELECT SUM(total_sales) FROM orders')
-    assert metric_sql_issue(None, 'SELECT SUM(total_sales) FROM orders') is None
+def test_metric_contract_generalizes_to_unseen_billing_schema():
+    assert metric_sql_issue('mrr', 'SELECT COUNT(DISTINCT signup_id) FROM subscriptions')
+    assert metric_sql_issue('mrr', 'SELECT SUM(s.mrr) FROM subscriptions s') is None
+    assert metric_sql_issue('signup_id', 'SELECT COUNT(DISTINCT signup_id) FROM subscriptions') is None
+    assert metric_sql_issue('mrr', "SELECT COUNT(*) FROM subscriptions WHERE note='SUM(mrr)'")
 
 
-def test_metric_mismatch_blocks_wrong_sql_before_model_review():
+def test_metric_mismatch_blocks_wrong_sql_from_same_model_verdict():
     from test_database_gateway import _pipeline_functions
-    from evaluation import SQL_CHECKS, failed_verdict
+    from evaluation import SQL_CHECKS, failed_verdict, SQL_EVALUATOR_PROMPT, sql_review_rules
     from sql_safety import split_statements
 
     calls = []
+    def reviewed(*args, **kwargs):
+        calls.append('critic')
+        return dict(passed=True, checks={key: True for key in SQL_CHECKS}, issues=[],
+                    retry_target=None, fix_instructions='', requested_metric_column='mrr')
     nodes = _pipeline_functions({'critic_node'}, {
-        'requested_metric': requested_metric, 'metric_sql_issue': metric_sql_issue,
+        'metric_sql_issue': metric_sql_issue, 'SQL_EVALUATOR_PROMPT': SQL_EVALUATOR_PROMPT,
+        'sql_review_rules': sql_review_rules,
         'SQL_CHECKS': SQL_CHECKS, 'failed_verdict': failed_verdict,
         '_split_statements': split_statements, 're': re, 'json': json,
-        'APPROVED_SCHEMA': json.dumps(SCHEMA),
-        'invoke_evaluator': lambda *args, **kwargs: calls.append('critic'),
+        'APPROVED_SCHEMA': json.dumps({'subscriptions': {'mrr': 'REAL', 'signup_id': 'TEXT'}}),
+        'invoke_evaluator': reviewed, 'critic_llm': object(),
     })
     result = nodes['critic_node']({
-        'question': 'How many orders were placed in East in 2017?',
+        'question': 'What is the recurring billing total?',
         'forecast': False,
-        'sql': "SELECT SUM(total_sales) FROM orders WHERE region = 'East'",
+        'sql': 'SELECT COUNT(DISTINCT signup_id) FROM subscriptions',
     })
     assert result['critic_approved'] is False
     assert result['retry_count'] == 1
-    assert 'order count' in result['critic_reason']
-    assert not calls
+    assert 'mrr' in result['critic_reason']
+    assert calls == ['critic']
 
 
 @pytest.mark.parametrize('question', [
@@ -102,6 +101,10 @@ def test_historical_template_requires_approved_order_columns():
         'What is the monthly order total in 2014?',
         {'orders': {'order_date': 'DATE'}},
     ) is None
+    assert historical_monthly_order_count_sql(
+        'What is the monthly order total in 2014?',
+        {'subscriptions': {'mrr': 'REAL', 'signup_id': 'TEXT'}},
+    ) is None
 
 
 def test_clear_monthly_order_question_bypasses_mistaken_sql_reviewer():
@@ -112,7 +115,7 @@ def test_clear_monthly_order_question_bypasses_mistaken_sql_reviewer():
     calls = []
     nodes = _pipeline_functions({'sql_agent_node', 'critic_node'}, {
         'historical_monthly_order_count_sql': historical_monthly_order_count_sql,
-        'requested_metric': requested_metric, 'metric_sql_issue': metric_sql_issue,
+        'metric_sql_issue': metric_sql_issue,
         'APPROVED_SCHEMA': json.dumps(SCHEMA), 'json': json,
         'SQL_CHECKS': SQL_CHECKS, '_split_statements': split_statements, 're': re,
         'sql_llm': type('Model', (), {'invoke': lambda self, messages: calls.append(messages)})(),
