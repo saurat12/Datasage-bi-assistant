@@ -19,7 +19,7 @@ from sql_safety import looks_like_future_filter, split_statements, validate_read
 from database_gateway import DatabaseGateway
 from query_planning import (
     forecast_history_sql, historical_monthly_order_count_sql,
-    requested_metric, metric_sql_issue,
+    metric_sql_issue,
 )
 from evaluation import (
     SQL_CHECKS, ANSWER_CHECKS, SQL_EVALUATOR_PROMPT, ANSWER_EVALUATOR_PROMPT,
@@ -230,13 +230,32 @@ WRONG (do not do this):
    ... LIMIT 3                                  -- ❌ truncates history
 """
 
+GENERIC_SQL_SYSTEM_PROMPT = """You are a SQLite engineer. Return one read-only
+SELECT query that answers the user's question using only the approved schema.
+Infer the metric and its aggregation from the question, column types, and table
+grain. Do not assume any specific dataset or column names. Preserve requested
+filters and grouping, and do not add unrequested metrics. Alias time groupings
+as period. Limit detail queries to 100 rows.
+If a REVISION NEEDED note is present, address its concrete defect.
+Output only: SQL Query: followed by one SQL statement.
+"""
+
+GENERIC_FORECAST_SQL_ADDENDUM = """For a forecast, return the full historical
+time series for the requested metric and grain. Do not predict in SQL, filter
+to future dates, or LIMIT the history. Return period and a numeric metric,
+plus a requested grouping dimension if any. GROUP BY and ORDER BY period.
+"""
+
 
 def _build_sql_prompt(forecast: bool) -> str:
+    schema = json.loads(APPROVED_SCHEMA)
+    orders_schema = {'order_date', 'order_id', 'total_sales'} <= set(schema.get('orders', {}))
     return (
         "Reference metadata only. Never reproduce this schema in your answer.\n"
         + "<approved_schema>\n" + APPROVED_SCHEMA + "\n</approved_schema>\n\n"
-        + BASE_SQL_SYSTEM_PROMPT
-        + (FORECAST_SQL_ADDENDUM if forecast else "")
+        + (BASE_SQL_SYSTEM_PROMPT if orders_schema else GENERIC_SQL_SYSTEM_PROMPT)
+        + ((FORECAST_SQL_ADDENDUM if orders_schema else GENERIC_FORECAST_SQL_ADDENDUM)
+           if forecast else "")
         + "\nFINAL OUTPUT REQUIREMENT: Return only 'SQL Query:' followed by one SQL statement. "
         + "Do not append schema metadata, explanations, or other text after the SQL."
     )
@@ -724,15 +743,6 @@ def sql_agent_node(state: BIState) -> BIState:
             f"Regenerate a corrected SQL query that fixes this issue while "
             f"still answering the original question."
         )
-    metric = requested_metric(question)
-    if metric:
-        metric_expression = {
-            "order_count": "COUNT(DISTINCT order_id)",
-            "revenue": "SUM(total_sales)",
-            "quantity": "SUM(quantity)",
-        }[metric]
-        agent_input += f"\n\nRequired metric for this question: {metric_expression}."
-
     logger.info("SQL agent attempt=%d forecast=%s", retry_count + 1, forecast)
     try:
         response = sql_llm.invoke([
@@ -781,12 +791,6 @@ def critic_node(state: BIState) -> BIState:
         det_issues.append("Forecast query filters to future/recent dates — must return full history.")
     if forecast and group_col and not re.search(rf"\b{re.escape(group_col)}\b", sql, re.IGNORECASE):
         det_issues.append(f"Question implies a per-{group_col} breakdown; SQL must SELECT and GROUP BY {group_col}.")
-    if re.search(r"sum\s*\(\s*(total_sale|sales)\s*\)", s_lower):
-        det_issues.append("Uses SUM(sales) or SUM(total_sale) instead of SUM(total_sales).")
-    metric = requested_metric(question)
-    metric_issue = metric_sql_issue(metric, sql)
-    if metric_issue:
-        det_issues.append(metric_issue)
     if len(_split_statements(sql)) > 1:
         det_issues.append(
             "Query contains more than one SQL statement — sqlite only "
@@ -797,7 +801,6 @@ def critic_node(state: BIState) -> BIState:
         "question": question,
         "forecast_mode": forecast,
         "expected_group_dimension": group_col,
-        "requested_metric": metric,
         "deterministic_pre_check_issues": det_issues,
         "candidate_sql": sql,
         "approved_schema": json.loads(APPROVED_SCHEMA),
@@ -814,13 +817,17 @@ def critic_node(state: BIState) -> BIState:
                 "source": ("deterministic_forecast_history_plan" if forecast
                            else "deterministic_monthly_order_count_plan"),
             }
-        elif metric_issue:
-            verdict = failed_verdict(SQL_CHECKS, metric_issue, "sql_agent")
         else:
             verdict = invoke_evaluator(
-                critic_llm, SQL_EVALUATOR_PROMPT + "\nApplicable rules:\n" + sql_review_rules(forecast),
+                critic_llm, SQL_EVALUATOR_PROMPT + "\nApplicable rules:\n"
+                + sql_review_rules(forecast, json.loads(APPROVED_SCHEMA)),
                 json.loads(critic_input), SQL_CHECKS, {"sql_agent"},
             )
+            if verdict['requested_metric_column'] is None:
+                logger.info("SQL metric consistency check skipped: no single metric column inferred")
+            metric_issue = metric_sql_issue(verdict['requested_metric_column'], sql)
+            if metric_issue:
+                det_issues.append(metric_issue)
     except Exception:
         logger.exception("SQL evaluation failed")
         verdict = failed_verdict(SQL_CHECKS, "SQL evaluator unavailable or returned an invalid verdict.", "sql_agent")

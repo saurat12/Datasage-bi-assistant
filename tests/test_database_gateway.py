@@ -159,7 +159,7 @@ def test_known_deterministic_issues_still_block(gateway):
 
 def test_generator_has_no_database_tools():
     import json
-    from query_planning import historical_monthly_order_count_sql, requested_metric
+    from query_planning import historical_monthly_order_count_sql
 
     seen = []
     model = SimpleNamespace(invoke=lambda messages: (seen.append(messages) or SimpleNamespace(content='SQL Query: SELECT 1;')))
@@ -167,7 +167,6 @@ def test_generator_has_no_database_tools():
         'sql_llm': model, '_build_sql_prompt': lambda forecast: 'approved schema',
         'extract_sql': lambda output: output.split('SQL Query:')[1].strip(),
         'historical_monthly_order_count_sql': historical_monthly_order_count_sql,
-        'requested_metric': requested_metric,
         'APPROVED_SCHEMA': json.dumps({'orders': {'order_date': 'DATE', 'order_id': 'TEXT'}}),
         'json': json,
     })

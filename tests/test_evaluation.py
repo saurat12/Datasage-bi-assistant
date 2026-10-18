@@ -15,8 +15,11 @@ from test_database_gateway import _pipeline_functions
 
 
 def approved(checks=ANSWER_CHECKS):
-    return dict(passed=True, checks={key: True for key in checks}, issues=[],
-                retry_target=None, fix_instructions='')
+    verdict = dict(passed=True, checks={key: True for key in checks}, issues=[],
+                   retry_target=None, fix_instructions='')
+    if checks == SQL_CHECKS:
+        verdict['requested_metric_column'] = None
+    return verdict
 
 
 def test_forecast_check_only_applies_to_forecasts():
@@ -38,6 +41,10 @@ def test_sql_reviewer_receives_only_applicable_rules():
     assert 'FORECAST HISTORY EXTRACTION' not in historical
     assert 'without LIMIT or future/recent-date filters' in forecast
     assert 'HISTORICAL ANALYSIS' not in forecast
+    assert 'total_sales' not in sql_review_rules(False, {'subscriptions': {'mrr': 'REAL'}})
+    assert 'SUM(total_sales)' in sql_review_rules(False, {
+        'orders': {'order_date': 'DATE', 'order_id': 'TEXT', 'total_sales': 'REAL'},
+    })
 
 
 def test_monthly_breakdown_can_contain_twelve_statements():
@@ -162,6 +169,25 @@ def test_sql_rejection_is_audited_once_and_real_rejections_still_block(withdraw)
     assert len(seen) == 2
     assert seen[0][1] == seen[1][1]
     assert 'Audit your rejection' in seen[1][-1][1]
+
+
+def test_sql_review_names_metric_from_unseen_schema_in_one_call():
+    schema = {'subscriptions': {'mrr': 'REAL', 'signup_id': 'TEXT'}}
+    raw = approved(SQL_CHECKS)
+    raw['requested_metric_column'] = 'mrr'
+    seen = []
+    model = SimpleNamespace(invoke=lambda messages: (
+        seen.append(messages) or SimpleNamespace(content=json.dumps(raw))))
+    verdict = invoke_evaluator(model, 'Review SQL', {
+        'question': 'What is recurring billing?',
+        'candidate_sql': 'SELECT SUM(mrr) FROM subscriptions',
+        'approved_schema': schema,
+    }, SQL_CHECKS, {'sql_agent'})
+    assert len(seen) == 1
+    assert verdict['requested_metric_column'] == 'mrr'
+    raw['requested_metric_column'] = 'invented_column'
+    with pytest.raises(ValueError, match='outside the approved schema'):
+        parse_verdict(json.dumps(raw), SQL_CHECKS, {'sql_agent'}, approved_schema=schema)
 
 
 def test_full_result_statistics_are_not_sample_statistics():
@@ -331,7 +357,7 @@ def test_real_graph_revises_summary_before_visualization():
 
 def test_sql_evaluation_receives_schema_and_fails_closed_on_outage():
     from evaluation import SQL_EVALUATOR_PROMPT
-    from query_planning import requested_metric, metric_sql_issue
+    from query_planning import metric_sql_issue
     seen = []
 
     def unavailable(messages):
@@ -346,7 +372,7 @@ def test_sql_evaluation_receives_schema_and_fails_closed_on_outage():
         'APPROVED_SCHEMA': '{"orders": {"total_sales": "REAL"}}',
         'json': json, 're': re, 'failed_verdict': failed_verdict, 'parse_verdict': parse_verdict,
         '_split_statements': lambda sql: [sql],
-        'requested_metric': requested_metric, 'metric_sql_issue': metric_sql_issue,
+        'metric_sql_issue': metric_sql_issue,
         'critic_llm': SimpleNamespace(invoke=unavailable),
     })
     result = nodes['critic_node']({'question': 'total sales', 'sql': 'SELECT SUM(total_sales) FROM orders'})
@@ -379,10 +405,27 @@ def test_sql_schema_is_reference_not_output_template(forecast):
         'APPROVED_SCHEMA': '{"orders": {"total_sales": "REAL"}}',
         'BASE_SQL_SYSTEM_PROMPT': 'OUTPUT FORMAT: SQL Query: <query>',
         'FORECAST_SQL_ADDENDUM': 'Use full history.',
+        'GENERIC_SQL_SYSTEM_PROMPT': 'OUTPUT FORMAT: SQL Query: <query>',
+        'GENERIC_FORECAST_SQL_ADDENDUM': 'Use full history.', 'json': json,
     })
     prompt = nodes['_build_sql_prompt'](forecast)
     assert prompt.index('</approved_schema>') < prompt.index('OUTPUT FORMAT:')
     assert prompt.endswith('Do not append schema metadata, explanations, or other text after the SQL.')
+
+
+def test_unseen_schema_gets_generic_sql_prompt():
+    nodes = _pipeline_functions({'_build_sql_prompt'}, {
+        'APPROVED_SCHEMA': '{"subscriptions": {"mrr": "REAL", "signup_id": "TEXT"}}',
+        'BASE_SQL_SYSTEM_PROMPT': 'orders-specific instructions',
+        'FORECAST_SQL_ADDENDUM': 'orders-specific forecast instructions',
+        'GENERIC_SQL_SYSTEM_PROMPT': 'Infer the metric from the schema.',
+        'GENERIC_FORECAST_SQL_ADDENDUM': 'Return historical series.',
+        'json': json,
+    })
+    prompt = nodes['_build_sql_prompt'](True)
+    assert 'Infer the metric from the schema.' in prompt
+    assert 'Return historical series.' in prompt
+    assert 'orders-specific' not in prompt
 
 
 def test_narrative_failure_does_not_rewrite_approved_sql():

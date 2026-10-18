@@ -1,47 +1,65 @@
-"""Conservative templates for clear historical and forecast questions."""
+"""Query Planning: Conservative templates for clear historical and forecast questions."""
 
 import re
 
 
-def requested_metric(question):
-    """Identify a single, explicitly requested aggregate metric, if clear."""
-    text = (question or '').lower()
-    aggregate = bool(re.search(
-        r'\b(total|sum|number|count|how many|monthly|yearly|weekly|daily|'
-        r'by|per|each|every)\b', text))
-    if not aggregate or re.search(
-        r'\b(average|avg|median|ratio|rate|percent|amount|value|price|cost|profit|margin)\b',
-        text,
-    ):
-        return None
-    order_count = bool(re.search(
-        r'\b(?:orders?|order count)\b', text))
-    revenue = bool(re.search(r'\b(?:sales|revenue)\b', text))
-    quantity = bool(re.search(r'\b(?:quantity|units|items sold)\b', text))
-    matches = [name for name, present in (
-        ('order_count', order_count), ('revenue', revenue), ('quantity', quantity)) if present]
-    return matches[0] if len(matches) == 1 else None
+_SQL_TOKEN = re.compile(r'"(?:""|[^"])*"|`(?:``|[^`])*`|\[[^]]*\]|[A-Za-z_]\w*|[(),.*]')
+_AGGREGATES = {'sum', 'count', 'avg', 'min', 'max', 'total', 'group_concat'}
 
 
-def metric_sql_issue(metric, sql):
-    """Catch clear metric substitutions without judging SQL equivalence generally."""
-    if metric is None or not sql:
+def _sql_tokens(sql):
+    """Discard comments and literals before inspecting SQL identifiers."""
+    scrubbed = re.sub(r"--[^\n]*|/\*[\s\S]*?\*/|'(?:''|[^'])*'", ' ', sql)
+    return _SQL_TOKEN.findall(scrubbed)
+
+
+def _identifier(token):
+    if token.startswith(('"', '`', '[')):
+        return token[1:-1].replace(token[0] * 2, token[0]).casefold()
+    return token.casefold()
+
+
+def metric_sql_issue(metric_column, sql):
+    """Check the evaluator's schema column against direct SELECT aggregates.
+
+    Complex CTE/subquery projections remain the evaluator's responsibility:
+    their outer aggregates may legitimately reference a derived alias instead.
+    """
+    if metric_column is None or not sql:
         return None
-    column = r'(?:\w+\.)?'
-    count_orders = bool(re.search(r'\bcount\s*\(\s*distinct\s+' + column + r'order_id\s*\)', sql, re.IGNORECASE))
-    sum_sales = bool(re.search(r'\bsum\s*\(\s*' + column + r'total_sales\s*\)', sql, re.IGNORECASE))
-    sum_quantity = bool(re.search(r'\bsum\s*\(\s*' + column + r'quantity\s*\)', sql, re.IGNORECASE))
-    if metric == 'order_count' and sum_sales and not count_orders:
-        return 'The question requests an order count, but SQL sums sales. Count distinct order_id.'
-    if metric == 'revenue' and count_orders and not sum_sales:
-        return 'The question requests sales or revenue, but SQL counts orders. Sum total_sales.'
-    if metric == 'quantity' and sum_sales and not sum_quantity:
-        return 'The question requests quantity, but SQL sums sales. Sum quantity.'
-    return None
+    tokens = _sql_tokens(sql)
+    if not tokens or _identifier(tokens[0]) != 'select':
+        return None
+    depth = 0
+    projection = []
+    for token in tokens[1:]:
+        word = _identifier(token)
+        if depth == 0 and word == 'from':
+            break
+        if word == 'select':
+            return None  # Derived projection: do not reject equivalent SQL.
+        projection.append(token)
+        depth += (token == '(') - (token == ')')
+    metric = metric_column.casefold()
+    for index, token in enumerate(projection[:-1]):
+        if _identifier(token) not in _AGGREGATES or projection[index + 1] != '(':
+            continue
+        depth = 1
+        for member in projection[index + 2:]:
+            depth += (member == '(') - (member == ')')
+            if depth == 0:
+                break
+            if _identifier(member) == metric:
+                return None
+    return f"The SQL aggregation does not use the requested metric column {metric_column!r}."
 
 
 def historical_monthly_order_count_sql(question, schema):
-    """Return a monthly distinct-order count only for an unfiltered year."""
+    """Orders-dataset optimization only; return None for any other schema/scope.
+
+    This template deliberately knows the orders vocabulary and columns. The
+    general SQL agent handles every question it does not recognize.
+    """
     words = re.findall(r"[a-z]+|\d+", question.lower())
     allowed = set('what is are was were the total number count of how many orders order '
                   'each every per by month monthly in for during year please'.split())
@@ -59,6 +77,8 @@ def historical_monthly_order_count_sql(question, schema):
 
 
 def forecast_history_sql(question, schema):
+    # Orders-dataset optimization only; unknown schemas and vocabulary fall
+    # through to the general SQL agent without applying this template.
     # Unknown words deliberately fall back to the normal generator, so filters
     # such as 'West', 'excluding returns' or 'using history since 2015' aren't lost.
     words = re.findall(r"[a-z]+|\d+", question.lower())
