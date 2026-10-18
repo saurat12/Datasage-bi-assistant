@@ -5,7 +5,8 @@ from typing import Optional
 
 
 FORBIDDEN_SQL = re.compile(
-    r"\b(insert|update|delete|drop|alter|create|replace|attach|detach|pragma|vacuum|reindex)\b",
+    r"\b(insert|update|delete|drop|alter|create|replace|attach|detach|pragma|vacuum|reindex)\b"
+    r"|\bpragma_\w*\s*\(|\bload_extension\s*\(",
     re.IGNORECASE,
 )
 

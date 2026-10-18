@@ -1039,7 +1039,7 @@ def forecast_agent_node(state: BIState) -> BIState:
         return {
             **state,
             "forecast_error": "No historical data was returned to forecast on.",
-            "forecast_retry_count": retry_count + 1,
+            "forecast_retry_count": retry_count,
         }
 
     df = pd.DataFrame(rows)
@@ -1080,7 +1080,7 @@ def forecast_agent_node(state: BIState) -> BIState:
 
     # Self-validation: flag low-confidence output rather than presenting it
     # with the same authority as a well-fitted seasonal model.
-    warnings: List[str] = []
+    warnings: List[str] = list(result.meta.get("warnings", []))
     if result.method == "Naive drift":
         warnings.append(
             "Used a simple trend projection due to insufficient history for "
@@ -1388,6 +1388,8 @@ def route_after_forecast(state: BIState) -> str:
     """Allow the forecast agent one self-retry (e.g. LLM horizon
     reinterpretation) before giving up and letting the Summary Agent
     explain the failure to the user."""
+    if state.get("forecast_error") and not state.get("rows"):
+        return "summary"  # A retry cannot create missing historical rows.
     if state.get("forecast_error") and state.get("forecast_retry_count", 0) <= MAX_FORECAST_RETRIES:
         return "retry"
     if state.get("forecast_result") is not None:

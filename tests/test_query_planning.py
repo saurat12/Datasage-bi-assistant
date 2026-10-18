@@ -31,6 +31,34 @@ def test_metric_contract_generalizes_to_unseen_billing_schema():
     assert metric_sql_issue('mrr', "SELECT COUNT(*) FROM subscriptions WHERE note='SUM(mrr)'")
 
 
+def test_metric_contract_checks_only_simple_passthrough_ctes():
+    assert metric_sql_issue(
+        'total_sales',
+        'WITH recent AS (SELECT * FROM orders) '
+        'SELECT COUNT(DISTINCT order_id) FROM recent',
+    )
+    assert metric_sql_issue(
+        'total_sales',
+        'WITH recent AS (SELECT * FROM orders) '
+        'SELECT SUM(total_sales) FROM recent',
+    ) is None
+    assert metric_sql_issue(
+        'total_sales',
+        'WITH recent AS (SELECT total_sales, order_id FROM orders) '
+        'SELECT COUNT(order_id) FROM recent',
+    )
+    assert metric_sql_issue(
+        'total_sales',
+        'WITH x AS (SELECT SUM(total_sales) AS revenue FROM orders) '
+        'SELECT SUM(revenue) FROM x',
+    ) is None
+    assert metric_sql_issue(
+        'total_sales',
+        'SELECT COUNT(order_id) FROM orders '
+        'UNION ALL SELECT COUNT(order_id) FROM orders',
+    ) is None
+
+
 def test_metric_mismatch_blocks_wrong_sql_from_same_model_verdict():
     from test_database_gateway import _pipeline_functions
     from evaluation import SQL_CHECKS, failed_verdict, SQL_EVALUATOR_PROMPT, sql_review_rules

@@ -19,20 +19,117 @@ def _identifier(token):
     return token.casefold()
 
 
+def _top_level_selects(tokens):
+    depth = 0
+    selects = []
+    for index, token in enumerate(tokens):
+        if depth == 0 and _identifier(token) == 'select':
+            selects.append(index)
+        depth += (token == '(') - (token == ')')
+        if depth < 0:
+            return []
+    return selects if depth == 0 else []
+
+
+def _projection_end(tokens, start):
+    depth = 0
+    for index in range(start + 1, len(tokens)):
+        token = tokens[index]
+        if depth == 0 and _identifier(token) == 'from':
+            return index
+        depth += (token == '(') - (token == ')')
+    return None
+
+
+def _simple_cte_select(tokens, metric, outer_select):
+    """Accept only a single CTE that passes the metric through unchanged."""
+    if len(tokens) < 7 or _identifier(tokens[1]) == 'recursive':
+        return False
+    cte_name = _identifier(tokens[1])
+    if tokens[2:4] != ['AS', '('] and [_identifier(t) for t in tokens[2:4]] != ['as', '(']:
+        return False  # Includes CTE column lists, which can rename fields.
+    depth = 1
+    close = 4
+    while close < outer_select and depth:
+        depth += (tokens[close] == '(') - (tokens[close] == ')')
+        close += 1
+    if depth or close != outer_select:
+        return False  # Multiple CTEs, joins between CTEs, or malformed shape.
+    body = tokens[4:close - 1]
+    if not body or _identifier(body[0]) != 'select':
+        return False
+    if sum(_identifier(token) == 'select' for token in body) != 1:
+        return False
+    source_from = _projection_end(body, 0)
+    if source_from is None or source_from + 1 >= len(body):
+        return False
+    projection = body[1:source_from]
+    fields = []
+    field = []
+    for token in projection + [',']:
+        if token == ',':
+            fields.append(field)
+            field = []
+        else:
+            field.append(token)
+    if fields == [['*']]:
+        passes_metric = True
+    else:
+        passes_metric = False
+        for field in fields:
+            if len(field) >= 3 and field[1] == '.':
+                field = field[2:]
+            if len(field) == 3 and _identifier(field[1]) == 'as':
+                if _identifier(field[0]) != _identifier(field[2]):
+                    return False
+                field = field[:1]
+            if len(field) != 1 or field[0] in {'*', '.', '('}:
+                return False
+            passes_metric |= _identifier(field[0]) == metric
+    if not passes_metric:
+        return False
+    # A single source table and optional WHERE may filter rows without
+    # changing column identity. Other relational operations need lineage.
+    source_tail = body[source_from + 1:]
+    where = next((i for i, token in enumerate(source_tail)
+                  if _identifier(token) == 'where'), len(source_tail))
+    if len(source_tail[:where]) != 1 or any(
+        _identifier(token) in {'join', 'group', 'having', 'union', 'intersect', 'except'}
+        for token in source_tail[where:]
+    ):
+        return False
+    outer_from = _projection_end(tokens, outer_select)
+    if outer_from is None or outer_from + 1 >= len(tokens):
+        return False
+    if _identifier(tokens[outer_from + 1]) != cte_name:
+        return False
+    outer_tail = tokens[outer_from + 2:]
+    return not any(_identifier(token) in {'join', 'union', 'intersect', 'except'}
+                   for token in outer_tail)
+
+
 def metric_sql_issue(metric_column, sql):
     """Check the evaluator's schema column against direct SELECT aggregates.
 
-    Complex CTE/subquery projections remain the evaluator's responsibility:
-    their outer aggregates may legitimately reference a derived alias instead.
+    Only simple passthrough CTEs are checked. Complex queries remain the
+    evaluator's responsibility; derived aliases can legitimately hide a base
+    metric column from the outer aggregate.
     """
     if metric_column is None or not sql:
         return None
     tokens = _sql_tokens(sql)
-    if not tokens or _identifier(tokens[0]) != 'select':
+    selects = _top_level_selects(tokens)
+    if len(selects) != 1:
+        return None  # UNION and other compound queries need semantic review.
+    start = selects[0]
+    if start and (not tokens or _identifier(tokens[0]) != 'with'
+                  or not _simple_cte_select(tokens, metric_column.casefold(), start)):
+        return None
+    if not start and _identifier(tokens[0]) != 'select':
         return None
     depth = 0
     projection = []
-    for token in tokens[1:]:
+    for token in tokens[start + 1:]:
         word = _identifier(token)
         if depth == 0 and word == 'from':
             break
