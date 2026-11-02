@@ -3,6 +3,7 @@ from types import SimpleNamespace
 import pandas as pd
 
 from test_database_gateway import _pipeline_functions
+from telemetry import measure_request
 
 
 def _forecast_result():
@@ -41,6 +42,30 @@ def test_forecast_success_routes_to_accuracy():
     assert result['forecast_result'].meta['warnings'] == ['Model limitation.']
     assert calls[0]['periods'] == 3
     assert nodes['route_after_forecast'](result) == 'accuracy'
+
+
+def test_forecast_and_backtest_record_separate_local_spans():
+    result = _forecast_result()
+    nodes = _forecast_nodes(lambda df, **kwargs: result)
+    nodes.update(_pipeline_functions({'accuracy_agent_node'}, {
+        'pd': pd,
+        'quick_accuracy': lambda df, horizon: SimpleNamespace(
+            mape=5.0, n_splits=1, n_points=3),
+    }))
+
+    @measure_request
+    def request():
+        state = nodes['forecast_agent_node']({
+            'forecast': True, 'question': 'Forecast revenue',
+            'rows': [{'period': '2017-01', 'revenue': 10.0}],
+        })
+        nodes['accuracy_agent_node'](state)
+        return {}
+
+    stages = request()['metrics']['stages']
+    assert [entry['stage'] for entry in stages] == [
+        'forecast_fit', 'forecast_backtest']
+    assert stages[0]['end_seconds'] <= stages[1]['start_seconds']
 
 
 def test_empty_history_skips_forecast_retry():

@@ -6,6 +6,8 @@ from contextvars import ContextVar, copy_context
 from copy import deepcopy
 import logging
 
+from telemetry import concurrent_work
+
 
 _current_jobs = ContextVar("chart_jobs", default=None)
 logger = logging.getLogger("datasage")
@@ -21,7 +23,10 @@ class ChartJobs:
         # mutate them or accidentally match an obsolete chart.
         snapshot = deepcopy(rows)
         context = copy_context()
-        future = self._executor.submit(context.run, generate, snapshot, question)
+        def work():
+            with concurrent_work():
+                return generate(snapshot, question)
+        future = self._executor.submit(context.run, work)
         self._latest = (sql, snapshot, future)
 
     def result(self, sql, rows):

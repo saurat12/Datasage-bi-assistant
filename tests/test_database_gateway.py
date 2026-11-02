@@ -9,6 +9,7 @@ import pytest
 
 from database_gateway import DatabaseGateway, DatabaseGatewayError
 from sql_safety import validate_read_only_sql
+from telemetry import stage_label, tracked_stage
 
 
 @pytest.fixture
@@ -103,7 +104,8 @@ def _pipeline_functions(names, namespace):
     path = Path(__file__).resolve().parents[1] / 'bi.py'
     tree = ast.parse(path.read_text(encoding='utf-8'))
     functions = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in names]
-    namespace.update(BIState=dict, logger=logging.getLogger('test'))
+    namespace.update(BIState=dict, logger=logging.getLogger('test'),
+                     stage_label=stage_label, tracked_stage=tracked_stage)
     exec(compile(ast.Module(body=functions, type_ignores=[]), str(path), 'exec'), namespace)
     return namespace
 

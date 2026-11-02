@@ -12,7 +12,7 @@ from langchain_openai import ChatOpenAI
 from langgraph.graph import StateGraph, END
 from openai import OpenAI
 
-from telemetry import TrackedModel, tracked_call, measure_request, mark_cache_hit
+from telemetry import TrackedModel, tracked_call, tracked_stage, stage_label, measure_request, mark_cache_hit
 from config import get_settings
 from chart_parallel import chart_request, schedule_chart, chart_result
 from sql_safety import looks_like_future_filter, split_statements, validate_read_only_sql
@@ -818,11 +818,12 @@ def critic_node(state: BIState) -> BIState:
                            else "deterministic_monthly_order_count_plan"),
             }
         else:
-            verdict = invoke_evaluator(
-                critic_llm, SQL_EVALUATOR_PROMPT + "\nApplicable rules:\n"
-                + sql_review_rules(forecast, json.loads(APPROVED_SCHEMA)),
-                json.loads(critic_input), SQL_CHECKS, {"sql_agent"},
-            )
+            with stage_label("sql_critic"):
+                verdict = invoke_evaluator(
+                    critic_llm, SQL_EVALUATOR_PROMPT + "\nApplicable rules:\n"
+                    + sql_review_rules(forecast, json.loads(APPROVED_SCHEMA)),
+                    json.loads(critic_input), SQL_CHECKS, {"sql_agent"},
+                )
             if verdict['requested_metric_column'] is None:
                 logger.info("SQL metric consistency check skipped: no single metric column inferred")
             metric_issue = metric_sql_issue(verdict['requested_metric_column'], sql)
@@ -875,7 +876,8 @@ def executor_node(state: BIState) -> BIState:
         sql = _sanitize_single_statement(sql)
         if not sql:
             raise ValueError("No valid SQL statement to execute.")
-        rows = _run_sql(sql, forecast=state.get("forecast", False))
+        with tracked_stage("database"):
+            rows = _run_sql(sql, forecast=state.get("forecast", False))
         logger.info("SQL execution completed rows=%d", len(rows))
         if rows and state.get("critic_approved") and not state.get("forecast", False):
             try:
@@ -1059,10 +1061,11 @@ def forecast_agent_node(state: BIState) -> BIState:
             horizon_label = f"next {periods} {unit}"
 
     try:
-        if target is not None:
-            result = forecast_series(df, periods=12, target_window=target)
-        else:
-            result = forecast_series(df, periods=periods, horizon_label=horizon_label, horizon_unit=unit)
+        with tracked_stage("forecast_fit"):
+            if target is not None:
+                result = forecast_series(df, periods=12, target_window=target)
+            else:
+                result = forecast_series(df, periods=periods, horizon_label=horizon_label, horizon_unit=unit)
     except ValueError as e:
         logger.warning("Forecast generation rejected input: %s", e)
         return {
@@ -1144,7 +1147,8 @@ def accuracy_agent_node(state: BIState) -> BIState:
                     date_candidates[0], as_index=False
                 )[numeric_candidates[0]].sum()
 
-        metrics = quick_accuracy(accuracy_df, horizon=3)
+        with tracked_stage("forecast_backtest"):
+            metrics = quick_accuracy(accuracy_df, horizon=3)
         if metrics is not None:
             result.meta["accuracy"] = metrics
             logger.info(
@@ -1270,14 +1274,15 @@ def answer_evaluation_node(state: BIState) -> BIState:
         if issues:
             verdict = failed_verdict(ANSWER_CHECKS, "; ".join(issues), "summary_agent")
         else:
-            verdict = invoke_evaluator(
-                critic_llm, ANSWER_EVALUATOR_PROMPT, {
-                    "question": state["question"], "executed_sql": state.get("sql"),
-                    "evidence": state["evidence"], "statements": state["summary_statements"],
-                    "forecast_requested": state.get("forecast", False),
-                }, ANSWER_CHECKS, {"sql_agent", "summary_agent"}, max_attempts=1,
-                forecast_requested=state.get("forecast", False),
-            )
+            with stage_label("answer_critic"):
+                verdict = invoke_evaluator(
+                    critic_llm, ANSWER_EVALUATOR_PROMPT, {
+                        "question": state["question"], "executed_sql": state.get("sql"),
+                        "evidence": state["evidence"], "statements": state["summary_statements"],
+                        "forecast_requested": state.get("forecast", False),
+                    }, ANSWER_CHECKS, {"sql_agent", "summary_agent"}, max_attempts=1,
+                    forecast_requested=state.get("forecast", False),
+                )
             verdict = apply_answer_applicability(verdict, state.get("forecast", False))
     except Exception:
         logger.exception("Answer evaluation failed")

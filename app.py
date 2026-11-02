@@ -260,7 +260,7 @@ def render_chart(spec: dict):
     try:
         col1, col2, col3 = st.columns([0.08, 1, 0.08])
         with col2:
-            st.vega_lite_chart(spec, use_container_width=True)
+            st.vega_lite_chart(spec, width="stretch")
     except Exception as e:
         logger.exception("Chart rendering failed")
         st.warning("The result was generated, but its chart could not be displayed.")
@@ -318,7 +318,7 @@ def render_metrics(metrics):
         if metrics.get('cache_hit'):
             st.caption("Cached answer; no new API calls.")
         if metrics.get('calls'):
-            st.dataframe(metrics['calls'], use_container_width=True)
+            st.dataframe(metrics['calls'], width="stretch")
         st.caption("Estimates cover reported API usage only. Unreported SDK retries and infrastructure costs are excluded.")
 
 
@@ -341,7 +341,7 @@ for msg in st.session_state.messages:
                 st.code(msg["sql"], language="sql")
         if msg.get("rows") and not msg.get("forecast_used"):
             with st.expander("Data", expanded=msg.get("evaluation_status") == "data_only"):
-                st.dataframe(msg["rows"], use_container_width=True)
+                st.dataframe(msg["rows"], width="stretch")
         if msg.get("chart_note"):
             st.caption(msg["chart_note"])
         if msg.get("chart_spec"):
@@ -350,7 +350,7 @@ for msg in st.session_state.messages:
             render_chart(msg["forecast_chart"])
         if msg.get("forecast_rows"):
             with st.expander("Forecast values"):
-                st.dataframe(msg["forecast_rows"], use_container_width=True)
+                st.dataframe(msg["forecast_rows"], width="stretch")
 
 
 # ---------------------------------------------------------------------------
@@ -386,7 +386,7 @@ if question:
 
         if result.get("rows") and not forecast_used:
             with st.expander("Data", expanded=result.get("evaluation", {}).get("status") == "data_only"):
-                st.dataframe(result["rows"], use_container_width=True)
+                st.dataframe(result["rows"], width="stretch")
 
         # Forecast responses have their own combined history + forecast chart.
         if result.get("chart_note") and not forecast_used:
@@ -400,7 +400,7 @@ if question:
                 render_chart(forecast["chart_spec"])
             if forecast.get("rows"):
                 with st.expander("Forecast values", expanded=True):
-                    st.dataframe(forecast["rows"], use_container_width=True)
+                    st.dataframe(forecast["rows"], width="stretch")
         elif forecast_error:
             st.markdown("---")
             st.markdown(forecast_error)
