@@ -16,7 +16,9 @@ _request_start = ContextVar('request_start', default=None)
 _stage_override = ContextVar('telemetry_stage_override', default=None)
 _concurrent_work = ContextVar('telemetry_concurrent_work', default=False)
 DEFAULT_PRICES = {'gpt-4o-mini': [0.15, 0.075, 0.60],
-                  'gpt-4o-mini-2024-07-18': [0.15, 0.075, 0.60]}
+                  'gpt-4o-mini-2024-07-18': [0.15, 0.075, 0.60],
+                  'gpt-4o': [2.50, 1.25, 10.00],
+                  'gpt-4o-2024-08-06': [2.50, 1.25, 10.00]}
 
 
 def price(model, inputs, cached, outputs):

@@ -109,11 +109,11 @@ def _simple_cte_select(tokens, metric, outer_select):
 
 
 def metric_sql_issue(metric_column, sql):
-    """Check the evaluator's schema column against direct SELECT aggregates.
+    """Check the evaluator's schema column against direct SELECT projections.
 
-    Only simple passthrough CTEs are checked. Complex queries remain the
-    evaluator's responsibility; derived aliases can legitimately hide a base
-    metric column from the outer aggregate.
+    Detail queries may project a metric without aggregating it. Only simple
+    passthrough CTEs are checked. Complex queries remain the evaluator's
+    responsibility; derived aliases can hide a base metric column.
     """
     if metric_column is None or not sql:
         return None
@@ -138,9 +138,11 @@ def metric_sql_issue(metric_column, sql):
         projection.append(token)
         depth += (token == '(') - (token == ')')
     metric = metric_column.casefold()
+    has_aggregate = False
     for index, token in enumerate(projection[:-1]):
         if _identifier(token) not in _AGGREGATES or projection[index + 1] != '(':
             continue
+        has_aggregate = True
         depth = 1
         for member in projection[index + 2:]:
             depth += (member == '(') - (member == ')')
@@ -148,7 +150,50 @@ def metric_sql_issue(metric_column, sql):
                 break
             if _identifier(member) == metric:
                 return None
+    if not has_aggregate:
+        if any(_identifier(token) == metric for token in projection):
+            return None
+        return f"The SQL projection does not use the requested metric column {metric_column!r}."
     return f"The SQL aggregation does not use the requested metric column {metric_column!r}."
+
+
+def requested_revenue_driver_dimensions(question, schema):
+    """Orders-schema contract for explicit revenue-driver breakdown questions.
+
+    The normal SQL agent handles other wording and other datasets. This scoped
+    contract prevents a regional total from replacing product contributions.
+    """
+    columns = schema.get('orders', {})
+    if not {'order_date', 'product_name', 'region', 'total_sales'} <= set(columns):
+        return ()
+    if not re.search(r"\bwhat(?:'s| is)\s+driving\b.*\brevenue\b", question, re.IGNORECASE):
+        return ()
+    # Growth needs a comparison period; an explicitly named other dimension
+    # should not be replaced with products by this narrow contract.
+    if re.search(r'\b(?:growth|change|increase|decrease|decline|trend|category|segment)\b',
+                 question, re.IGNORECASE):
+        return ()
+    if re.search(r'\b(?:in\s+each|each|per|by)\s+region\b', question, re.IGNORECASE):
+        return ('region', 'product_name')
+    return ('product_name',)
+
+
+def revenue_driver_sql_issue(sql, dimensions):
+    """Check that simple aggregate SQL keeps every requested driver dimension."""
+    if not dimensions or not sql or not sql.lstrip().lower().startswith('select'):
+        return None
+    projection = re.search(r'\bSELECT\b(.*?)\bFROM\b', sql, re.IGNORECASE | re.DOTALL)
+    grouping = re.search(r'\bGROUP\s+BY\b(.*?)(?=\bORDER\s+BY\b|\bLIMIT\b|;|$)',
+                         sql, re.IGNORECASE | re.DOTALL)
+    if not projection or not grouping:
+        return 'Revenue-driver SQL must aggregate by the requested contributor dimensions.'
+    missing = [column for column in dimensions if not (
+        re.search(rf'\b{re.escape(column)}\b', projection.group(1), re.IGNORECASE)
+        and re.search(rf'\b{re.escape(column)}\b', grouping.group(1), re.IGNORECASE)
+    )]
+    if missing:
+        return 'Revenue-driver SQL must SELECT and GROUP BY ' + ', '.join(missing) + '.'
+    return None
 
 
 def historical_monthly_order_count_sql(question, schema):

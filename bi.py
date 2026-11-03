@@ -19,7 +19,7 @@ from sql_safety import looks_like_future_filter, split_statements, validate_read
 from database_gateway import DatabaseGateway
 from query_planning import (
     forecast_history_sql, historical_monthly_order_count_sql,
-    metric_sql_issue,
+    metric_sql_issue, requested_revenue_driver_dimensions, revenue_driver_sql_issue,
 )
 from evaluation import (
     SQL_CHECKS, ANSWER_CHECKS, SQL_EVALUATOR_PROMPT, ANSWER_EVALUATOR_PROMPT,
@@ -75,6 +75,10 @@ _llm_options = dict(
 )
 sql_llm = TrackedModel(ChatOpenAI(**_llm_options), "sql", settings.openai_model)
 critic_llm = TrackedModel(ChatOpenAI(**_llm_options), "critic", settings.openai_model)
+forecast_sql_critic_llm = TrackedModel(
+    ChatOpenAI(**{**_llm_options, "model": settings.forecast_sql_critic_model}),
+    "critic", settings.forecast_sql_critic_model,
+)
 summary_llm = TrackedModel(ChatOpenAI(**_llm_options), "summary", settings.openai_model)
 orchestrator_llm = TrackedModel(ChatOpenAI(**_llm_options), "orchestrator", settings.openai_model)
 forecast_llm = TrackedModel(ChatOpenAI(**_llm_options), "forecast", settings.openai_model)
@@ -116,7 +120,8 @@ COLUMN RULES:
 - Return only requested metrics and grouping fields. Do not add overall/annual
   totals, percentages or extra metrics unless explicitly requested. This also
   applies to revisions: remove unsupported prose rather than expanding query scope.
-- Always use SUM(total_sales) when the user asks for total sales, revenue, or sales figures
+- For an aggregate total of sales or revenue, use SUM(total_sales). For detail-row
+  requests, select total_sales as a column without aggregating the rows.
 - Never use SUM(sales) or SUM(total_sale) — the correct column is total_sales
 - Always use strftime('%Y-%m', order_date) for monthly aggregations
 - Always use strftime('%Y', order_date) for yearly aggregations
@@ -395,6 +400,83 @@ def _safe_rows_for_llm(rows: List[Dict[str, Any]], max_rows: int) -> List[Dict[s
     return [{key: value for key, value in row.items() if key in allowed} for row in selected]
 
 
+def _simple_bar_chart(data: List[Dict[str, Any]]) -> tuple[Optional[dict], Optional[str]]:
+    """Build a bar chart for an unambiguous category and numeric measure."""
+    if not data or len(data[0]) != 2:
+        return None, None
+    columns = list(data[0])
+    numeric = [key for key in columns if all(
+        type(row.get(key)) in (int, float) and pd.notna(row[key]) for row in data
+    )]
+    if len(numeric) != 1:
+        return None, None
+    measure = numeric[0]
+    category = next(key for key in columns if key != measure)
+    if category.lower() in {"period", "month", "year", "date"}:
+        return None, None
+    if not all(isinstance(row.get(category), str) and row[category] for row in data):
+        return None, None
+    if all(pd.notna(pd.to_datetime(row[category], errors="coerce")) for row in data):
+        return None, None
+    shown = sorted(data, key=lambda row: row[measure], reverse=True)[:20]
+    spec = {
+        "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+        "title": f"{measure.replace('_', ' ').title()} by {category.replace('_', ' ').title()}",
+        "data": {"values": shown},
+        "mark": "bar",
+        "encoding": {
+            "y": {"field": category, "type": "nominal", "sort": "-x"},
+            "x": {"field": measure, "type": "quantitative"},
+            "tooltip": [{"field": category, "type": "nominal"},
+                        {"field": measure, "type": "quantitative"}],
+        },
+        "width": 400,
+        "height": min(500, max(240, len(shown) * 24)),
+    }
+    note = (f"Chart shows the top {len(shown)} of {len(data)} returned categories."
+            if len(data) > len(shown) else None)
+    return spec, note
+
+
+def _regional_product_chart(data: List[Dict[str, Any]]) -> tuple[Optional[dict], Optional[str]]:
+    """Show product contributions within each region without dropping either field."""
+    if not data or len(data[0]) != 3 or not {'region', 'product_name'} <= set(data[0]):
+        return None, None
+    measure = next((key for key in data[0] if key not in {'region', 'product_name'}), None)
+    if not measure or not all(
+        isinstance(row.get('region'), str) and isinstance(row.get('product_name'), str)
+        and type(row.get(measure)) in (int, float) and pd.notna(row[measure])
+        for row in data
+    ):
+        return None, None
+    groups = {}
+    for row in data:
+        groups.setdefault(row['region'], []).append(row)
+    shown = [row for region in sorted(groups)
+             for row in sorted(groups[region], key=lambda item: item[measure], reverse=True)[:10]]
+    spec = {
+        "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+        "title": f"{measure.replace('_', ' ').title()} by Product and Region",
+        "data": {"values": shown},
+        "facet": {"field": "region", "type": "nominal", "columns": 2},
+        "spec": {
+            "mark": "bar",
+            "encoding": {
+                "y": {"field": "product_name", "type": "nominal", "sort": "-x"},
+                "x": {"field": measure, "type": "quantitative"},
+                "tooltip": [{"field": "region", "type": "nominal"},
+                            {"field": "product_name", "type": "nominal"},
+                            {"field": measure, "type": "quantitative"}],
+            },
+            "width": 300,
+            "height": 260,
+        },
+    }
+    note = ("Chart shows up to 10 products per region from the returned rows. "
+            "Other products may be omitted." if len(shown) < len(data) else None)
+    return spec, note
+
+
 def generate_chart_spec(
     data: List[Dict[str, Any]],
     question: Optional[str] = None,
@@ -416,6 +498,15 @@ def generate_chart_spec(
     if not data:
         logger.info("Chart skipped because result set is empty")
         return None, "No rows were returned, so there's nothing to chart."
+
+    safe_data = _safe_rows_for_llm(data, len(data))
+    if requested_revenue_driver_dimensions(question or '', json.loads(APPROVED_SCHEMA)) == ('region', 'product_name'):
+        regional_chart = _regional_product_chart(safe_data)
+        if regional_chart[0]:
+            return regional_chart
+    simple_chart = _simple_bar_chart(safe_data)
+    if simple_chart[0]:
+        return simple_chart
 
     chart_data, was_downsampled = _downsample_for_chart(
         _safe_rows_for_llm(data, settings.chart_sample_rows)
@@ -743,6 +834,13 @@ def sql_agent_node(state: BIState) -> BIState:
             f"Regenerate a corrected SQL query that fixes this issue while "
             f"still answering the original question."
         )
+    driver_dimensions = (requested_revenue_driver_dimensions(
+        question, json.loads(APPROVED_SCHEMA)) if not forecast else ())
+    if driver_dimensions:
+        agent_input += ("\n\nFor this revenue-driver breakdown, include "
+                        + ", ".join(driver_dimensions)
+                        + " in SELECT and GROUP BY, and SUM(total_sales). "
+                          "These are product contributions, not proven causes of change.")
     logger.info("SQL agent attempt=%d forecast=%s", retry_count + 1, forecast)
     try:
         response = sql_llm.invoke([
@@ -791,6 +889,11 @@ def critic_node(state: BIState) -> BIState:
         det_issues.append("Forecast query filters to future/recent dates — must return full history.")
     if forecast and group_col and not re.search(rf"\b{re.escape(group_col)}\b", sql, re.IGNORECASE):
         det_issues.append(f"Question implies a per-{group_col} breakdown; SQL must SELECT and GROUP BY {group_col}.")
+    driver_dimensions = (requested_revenue_driver_dimensions(
+        question, json.loads(APPROVED_SCHEMA)) if not forecast else ())
+    driver_issue = revenue_driver_sql_issue(sql, driver_dimensions)
+    if driver_issue:
+        det_issues.append(driver_issue)
     if len(_split_statements(sql)) > 1:
         det_issues.append(
             "Query contains more than one SQL statement — sqlite only "
@@ -801,6 +904,7 @@ def critic_node(state: BIState) -> BIState:
         "question": question,
         "forecast_mode": forecast,
         "expected_group_dimension": group_col,
+        "expected_driver_dimensions": driver_dimensions,
         "deterministic_pre_check_issues": det_issues,
         "candidate_sql": sql,
         "approved_schema": json.loads(APPROVED_SCHEMA),
@@ -820,7 +924,8 @@ def critic_node(state: BIState) -> BIState:
         else:
             with stage_label("sql_critic"):
                 verdict = invoke_evaluator(
-                    critic_llm, SQL_EVALUATOR_PROMPT + "\nApplicable rules:\n"
+                    forecast_sql_critic_llm if forecast else critic_llm,
+                    SQL_EVALUATOR_PROMPT + "\nApplicable rules:\n"
                     + sql_review_rules(forecast, json.loads(APPROVED_SCHEMA)),
                     json.loads(critic_input), SQL_CHECKS, {"sql_agent"},
                 )

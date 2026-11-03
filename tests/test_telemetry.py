@@ -48,6 +48,9 @@ def test_price_override(monkeypatch):
     assert price('custom', 1000, 200, 100) == pytest.approx(.0011)
     monkeypatch.setenv('MODEL_PRICES_JSON', 'invalid')
     assert price('custom', 1000, 0, 100) is None
+    monkeypatch.delenv('MODEL_PRICES_JSON')
+    assert price('gpt-4o', 1000, 0, 100) == pytest.approx(.0035)
+    assert price('gpt-4o-2024-08-06', 1000, 0, 100) == pytest.approx(.0035)
 
 
 @pytest.mark.parametrize('tracked', [False, True])

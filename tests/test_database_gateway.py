@@ -106,6 +106,10 @@ def _pipeline_functions(names, namespace):
     functions = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in names]
     namespace.update(BIState=dict, logger=logging.getLogger('test'),
                      stage_label=stage_label, tracked_stage=tracked_stage)
+    namespace.setdefault('forecast_sql_critic_llm', namespace.get('critic_llm'))
+    from query_planning import requested_revenue_driver_dimensions, revenue_driver_sql_issue
+    namespace.setdefault('requested_revenue_driver_dimensions', requested_revenue_driver_dimensions)
+    namespace.setdefault('revenue_driver_sql_issue', revenue_driver_sql_issue)
     exec(compile(ast.Module(body=functions, type_ignores=[]), str(path), 'exec'), namespace)
     return namespace
 

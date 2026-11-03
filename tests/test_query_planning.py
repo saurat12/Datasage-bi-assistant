@@ -31,6 +31,113 @@ def test_metric_contract_generalizes_to_unseen_billing_schema():
     assert metric_sql_issue('mrr', "SELECT COUNT(*) FROM subscriptions WHERE note='SUM(mrr)'")
 
 
+def test_metric_contract_allows_detail_projection_but_not_substituted_column():
+    assert metric_sql_issue(
+        'total_sales',
+        "SELECT order_id, order_date, total_sales FROM orders "
+        "WHERE region = 'West' ORDER BY order_date DESC LIMIT 5",
+    ) is None
+    assert metric_sql_issue(
+        'total_sales',
+        'SELECT order_id, order_date FROM orders ORDER BY order_date DESC LIMIT 5',
+    )
+    assert metric_sql_issue(
+        'total_sales',
+        'SELECT COUNT(DISTINCT order_id) FROM orders',
+    )
+
+
+def test_revenue_driver_dimensions_follow_question_and_orders_schema():
+    from query_planning import requested_revenue_driver_dimensions, revenue_driver_sql_issue
+
+    schema = {'orders': {'order_date': 'TEXT', 'region': 'TEXT',
+                         'product_name': 'TEXT', 'total_sales': 'REAL'}}
+    single = "What's driving the revenue in June 2016?"
+    regional = "What's driving revenue in each region in June 2015?"
+    assert requested_revenue_driver_dimensions(single, schema) == ('product_name',)
+    assert requested_revenue_driver_dimensions(regional, schema) == ('region', 'product_name')
+    assert requested_revenue_driver_dimensions(regional, {'billing': schema['orders']}) == ()
+    assert requested_revenue_driver_dimensions('Revenue by region', schema) == ()
+    assert requested_revenue_driver_dimensions("What's driving revenue growth?", schema) == ()
+    assert requested_revenue_driver_dimensions("What's driving revenue by category?", schema) == ()
+
+    product_sql = ('SELECT product_name, SUM(total_sales) FROM orders '
+                   'GROUP BY product_name')
+    regional_sql = ('SELECT region, product_name, SUM(total_sales) FROM orders '
+                    'GROUP BY region, product_name')
+    assert revenue_driver_sql_issue(product_sql, ('product_name',)) is None
+    assert revenue_driver_sql_issue(regional_sql, ('region', 'product_name')) is None
+    assert revenue_driver_sql_issue('SELECT region, SUM(total_sales) FROM orders '
+                                    'GROUP BY region', ('region', 'product_name'))
+    assert revenue_driver_sql_issue('SELECT region, product_name, SUM(total_sales) '
+                                    'FROM orders GROUP BY region', ('region', 'product_name'))
+
+
+def test_sql_critic_accepts_detail_projection_and_rejects_missing_metric():
+    from test_database_gateway import _pipeline_functions
+    from evaluation import SQL_CHECKS, SQL_EVALUATOR_PROMPT, failed_verdict, sql_review_rules
+    from sql_safety import split_statements
+
+    def approved(*args, **kwargs):
+        return dict(passed=True, checks={key: True for key in SQL_CHECKS},
+                    issues=[], retry_target=None, fix_instructions='',
+                    requested_metric_column='total_sales')
+
+    nodes = _pipeline_functions({'critic_node'}, {
+        'metric_sql_issue': metric_sql_issue, 'SQL_EVALUATOR_PROMPT': SQL_EVALUATOR_PROMPT,
+        'sql_review_rules': sql_review_rules, 'SQL_CHECKS': SQL_CHECKS,
+        'failed_verdict': failed_verdict, '_split_statements': split_statements,
+        're': re, 'json': json, 'APPROVED_SCHEMA': json.dumps(SCHEMA),
+        'invoke_evaluator': approved, 'critic_llm': object(),
+    })
+    valid = nodes['critic_node']({
+        'question': 'Show order ID, date and sales for the latest five orders',
+        'sql': 'SELECT order_id, order_date, total_sales FROM orders '
+               'ORDER BY order_date DESC LIMIT 5', 'forecast': False,
+    })
+    assert valid['critic_approved'] is True
+    invalid = nodes['critic_node']({
+        'question': 'Show order ID, date and sales for the latest five orders',
+        'sql': 'SELECT order_id, order_date FROM orders ORDER BY order_date DESC LIMIT 5',
+        'forecast': False,
+    })
+    assert invalid['critic_approved'] is False
+    assert 'total_sales' in invalid['critic_reason']
+
+
+def test_forecast_sql_critic_uses_separate_model_without_changing_historical_review():
+    from test_database_gateway import _pipeline_functions
+    from evaluation import SQL_CHECKS, SQL_EVALUATOR_PROMPT, failed_verdict, sql_review_rules
+    from sql_safety import split_statements
+
+    historical_model, forecast_model = object(), object()
+    seen = []
+
+    def reviewed(model, *args, **kwargs):
+        seen.append(model)
+        return dict(passed=True, checks={key: True for key in SQL_CHECKS},
+                    issues=[], retry_target=None, fix_instructions='',
+                    requested_metric_column='total_sales')
+
+    nodes = _pipeline_functions({'critic_node'}, {
+        'metric_sql_issue': metric_sql_issue, 'SQL_EVALUATOR_PROMPT': SQL_EVALUATOR_PROMPT,
+        'sql_review_rules': sql_review_rules, 'SQL_CHECKS': SQL_CHECKS,
+        'failed_verdict': failed_verdict, '_split_statements': split_statements,
+        '_looks_like_future_filter': lambda sql: False,
+        're': re, 'json': json, 'APPROVED_SCHEMA': json.dumps(SCHEMA),
+        'invoke_evaluator': reviewed, 'critic_llm': historical_model,
+        'forecast_sql_critic_llm': forecast_model,
+    })
+    sql = 'SELECT SUM(total_sales) FROM orders'
+    assert nodes['critic_node']({'question': 'Total sales', 'sql': sql,
+                                 'forecast': False})['critic_approved']
+    forecast_sql = ("SELECT strftime('%Y-%m-01', order_date) AS period, "
+                    'SUM(total_sales) FROM orders GROUP BY period ORDER BY period')
+    assert nodes['critic_node']({'question': 'Forecast sales', 'sql': forecast_sql,
+                                 'forecast': True})['critic_approved']
+    assert seen == [historical_model, forecast_model]
+
+
 def test_metric_contract_checks_only_simple_passthrough_ctes():
     assert metric_sql_issue(
         'total_sales',

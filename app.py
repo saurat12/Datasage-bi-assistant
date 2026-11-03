@@ -1,283 +1,39 @@
+"""Streamlit dashboard for DataSage answers."""
+
 import hmac
+import html
 import logging
+from numbers import Real
 
 import streamlit as st
 
-st.set_page_config(
-    page_title="DataSage",
-    page_icon="📊",
-    layout="wide",
-    initial_sidebar_state="collapsed"
-)
-
+st.set_page_config(page_title="DataSage", page_icon="📊", layout="wide",
+                   initial_sidebar_state="collapsed")
 logger = logging.getLogger("datasage.app")
 
 try:
     from config import get_settings
     from bi import ask_bi_agent
-
     settings = get_settings()
 except Exception:
     logger.exception("DataSage startup failed")
-    st.error(
-        "DataSage could not start because its configuration is incomplete "
-        "or invalid. Check the container logs and deployment settings."
-    )
+    st.error("DataSage could not start. Check the container logs and deployment settings.")
     st.stop()
-
-st.markdown("""
-<style>
-@import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@400;500;600;700&display=swap');
-
-:root {
-    --bg: #08111f;
-    --panel: rgba(15, 23, 39, 0.78);
-    --panel-2: rgba(20, 30, 50, 0.88);
-    --text: #edf2f7;
-    --muted: #94a3b8;
-    --border: rgba(255,255,255,0.08);
-    --accent: #f5b942;
-    --accent-soft: rgba(245, 185, 66, 0.14);
-    --user-bg: linear-gradient(180deg, #1a2440, #141d33);
-    --assistant-bg: linear-gradient(180deg, #10192a, #0d1524);
-    --shadow: 0 16px 45px rgba(0,0,0,0.35);
-    --radius-lg: 24px;
-    --radius-md: 16px;
-}
-
-html, body, [class*="css"] {
-    font-family: 'DM Sans', sans-serif;
-    background:
-        radial-gradient(circle at top left, rgba(245,185,66,0.12), transparent 22%),
-        radial-gradient(circle at top right, rgba(73,127,255,0.10), transparent 20%),
-        linear-gradient(180deg, #08111f 0%, #060c17 100%);
-    color: var(--text);
-}
-
-.stApp { background: transparent; }
-
-#MainMenu, footer, header { visibility: hidden; }
-
-.block-container {
-    max-width: 1140px;
-    padding-top: 1.2rem;
-    padding-bottom: 9rem;
-}
-
-.datasage-shell {
-    background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.015));
-    border: 1px solid var(--border);
-    border-radius: 28px;
-    box-shadow: var(--shadow);
-    overflow: hidden;
-    backdrop-filter: blur(14px);
-}
-
-.datasage-header {
-    position: sticky;
-    top: 0;
-    z-index: 20;
-    padding: 1.2rem 1.5rem 1rem 1.5rem;
-    background: linear-gradient(180deg, rgba(10,16,28,0.95), rgba(10,16,28,0.72));
-    backdrop-filter: blur(16px);
-    border-bottom: 1px solid rgba(255,255,255,0.06);
-}
-
-.datasage-toprow {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
-}
-
-.datasage-brand {
-    display: flex;
-    flex-direction: column;
-    gap: 0.2rem;
-}
-
-.datasage-title {
-    font-family: 'DM Serif Display', serif;
-    font-size: 2rem;
-    line-height: 1;
-    color: #ffffff;
-    margin: 0;
-    letter-spacing: -0.4px;
-}
-
-.datasage-title span { color: var(--accent); }
-
-.datasage-caption {
-    margin: 0;
-    font-size: 0.92rem;
-    color: var(--muted);
-}
-
-.datasage-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.45rem;
-    padding: 0.5rem 0.85rem;
-    border-radius: 999px;
-    border: 1px solid rgba(245,185,66,0.24);
-    background: rgba(245,185,66,0.08);
-    color: #f8d27b;
-    font-size: 0.78rem;
-    font-weight: 700;
-    letter-spacing: 0.03em;
-}
-
-.datasage-body { padding: 1rem 1rem 1.2rem 1rem; }
-
-[data-testid="stChatMessage"] {
-    background: transparent !important;
-    border: none !important;
-    padding: 0.3rem 0 !important;
-}
-
-[data-testid="stChatMessageContent"] {
-    border-radius: 18px !important;
-    padding: 1rem 1.1rem !important;
-    border: 1px solid var(--border) !important;
-    box-shadow: 0 10px 26px rgba(0,0,0,0.18);
-}
-
-[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarAssistant"]) [data-testid="stChatMessageContent"] {
-    background: var(--assistant-bg) !important;
-}
-
-[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) [data-testid="stChatMessageContent"] {
-    background: var(--user-bg) !important;
-    border: 1px solid rgba(245,185,66,0.16) !important;
-}
-
-[data-testid="stChatMessageContent"] p,
-[data-testid="stChatMessageContent"] li,
-[data-testid="stChatMessageContent"] span {
-    color: #dbe4f0 !important;
-    font-size: 0.98rem !important;
-    line-height: 1.7 !important;
-}
-
-[data-testid="stExpander"] {
-    background: linear-gradient(180deg, #0f1727, #0c1322) !important;
-    border: 1px solid var(--border) !important;
-    border-radius: 14px !important;
-    margin-top: 0.8rem !important;
-    overflow: hidden;
-}
-
-[data-testid="stExpander"] summary {
-    font-size: 0.78rem !important;
-    color: #9fb0c7 !important;
-    font-weight: 700 !important;
-    letter-spacing: 0.08em !important;
-    text-transform: uppercase !important;
-}
-
-.stCode {
-    background: #09111d !important;
-    border-radius: 10px !important;
-    border: 1px solid rgba(255,255,255,0.04) !important;
-    font-size: 0.86rem !important;
-}
-
-[data-testid="stChatInput"] {
-    position: fixed;
-    left: 50%;
-    bottom: 1.15rem;
-    transform: translateX(-50%);
-    width: min(980px, calc(100% - 2rem));
-    background: rgba(12, 18, 32, 0.82) !important;
-    border: 1px solid rgba(245,185,66,0.22) !important;
-    border-radius: 18px !important;
-    backdrop-filter: blur(16px);
-    box-shadow: 0 18px 50px rgba(0,0,0,0.35);
-}
-
-[data-testid="stChatInput"] textarea {
-    color: var(--text) !important;
-    font-size: 0.98rem !important;
-    font-family: 'DM Sans', sans-serif !important;
-}
-
-[data-testid="stChatInput"] textarea::placeholder { color: #7f8da3 !important; }
-
-[data-testid="stChatInput"]:focus-within {
-    border-color: rgba(245,185,66,0.5) !important;
-    box-shadow: 0 0 0 4px rgba(245,185,66,0.08), 0 18px 50px rgba(0,0,0,0.35) !important;
-}
-
-.forecast-pill {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.4rem;
-    padding: 0.25rem 0.7rem;
-    border-radius: 999px;
-    background: rgba(245,185,66,0.14);
-    border: 1px solid rgba(245,185,66,0.32);
-    color: #f8d27b;
-    font-size: 0.74rem;
-    font-weight: 700;
-    letter-spacing: 0.04em;
-    margin-bottom: 0.6rem;
-}
-
-::-webkit-scrollbar { width: 8px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: rgba(148,163,184,0.25); border-radius: 999px; }
-::-webkit-scrollbar-thumb:hover { background: rgba(148,163,184,0.4); }
-
-@media (max-width: 768px) {
-    .block-container { padding-top: 0.8rem; padding-bottom: 9.5rem; }
-    .datasage-header { padding: 1rem 0.9rem; }
-    .datasage-title { font-size: 1.65rem; }
-    .datasage-caption { font-size: 0.84rem; }
-    [data-testid="stChatMessageContent"] { padding: 0.9rem 0.95rem !important; border-radius: 16px !important; }
-}
-</style>
-
-<div class="datasage-shell">
-    <div class="datasage-header">
-        <div class="datasage-toprow">
-            <div class="datasage-brand">
-                <p class="datasage-title">Data<span>Sage</span></p>
-                <p class="datasage-caption">Turning your data into actionable insights</p>
-            </div>
-            <div class="datasage-badge">● BI Copilot</div>
-        </div>
-    </div>
-    <div class="datasage-body">
-""", unsafe_allow_html=True)
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def render_chart(spec: dict):
-    """Render a Vega-Lite spec directly using st.vega_lite_chart."""
-    try:
-        col1, col2, col3 = st.columns([0.08, 1, 0.08])
-        with col2:
-            st.vega_lite_chart(spec, width="stretch")
-    except Exception as e:
-        logger.exception("Chart rendering failed")
-        st.warning("The result was generated, but its chart could not be displayed.")
 
 
 def require_authentication() -> None:
     if not settings.auth_required:
         return
-    expected_password = settings.app_password.get_secret_value()
-    if not expected_password:
+    expected = settings.app_password.get_secret_value()
+    if not expected:
         st.error("Authentication is enabled but no application password is configured.")
         st.stop()
     if st.session_state.get("authenticated"):
         return
+    st.title("DataSage")
     password = st.text_input("Application password", type="password")
     if st.button("Sign in"):
-        st.session_state.authenticated = hmac.compare_digest(password, expected_password)
+        st.session_state.authenticated = hmac.compare_digest(password, expected)
         if not st.session_state.authenticated:
             st.error("Incorrect password.")
         else:
@@ -287,136 +43,232 @@ def require_authentication() -> None:
 
 require_authentication()
 
+st.markdown("""
+<style>
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&display=swap');
+:root { --bg:#071226; --panel:#14233d; --line:#30415e; --text:#f5f8ff;
+        --muted:#aebdd2; --accent:#ffbd4a; }
+html,body,[class*="css"],.stApp { font-family:'DM Sans',sans-serif;
+    color:var(--text); background:var(--bg); }
+.stApp { background:linear-gradient(180deg,#09162c,#071226 60%); }
+[data-testid="stHeader"],#MainMenu,footer { display:none; }
+.block-container { max-width:1580px; padding-top:1.2rem; padding-bottom:3rem; }
+h1,h2,h3,p,label { color:var(--text); }
+.ds-header { display:flex; justify-content:space-between; align-items:center; gap:1rem;
+    border-bottom:1px solid var(--line); padding:.2rem 0 1.1rem; }
+.ds-brand { font-size:1.8rem; font-weight:800; letter-spacing:-.05em; }
+.ds-mark { color:var(--accent); letter-spacing:-.2em; padding-right:.6rem; }
+.ds-tab { color:var(--accent); font-weight:700; border-bottom:3px solid var(--accent);
+    padding:.7rem 0; }
+.ds-source { color:#90e7ab; font-size:.9rem; }
+.ds-intro { padding:1.5rem 0 .75rem; }
+.ds-eyebrow { color:var(--accent); font-size:.76rem; font-weight:800;
+    letter-spacing:.13em; text-transform:uppercase; }
+.ds-intro h1 { font-size:clamp(1.8rem,3vw,2.5rem); margin:.25rem 0;
+    letter-spacing:-.04em; }
+.ds-intro p,.ds-question { color:var(--muted); }
+[data-testid="stForm"] { background:var(--panel); border:1px solid var(--accent)!important;
+    border-radius:14px; padding:.45rem .8rem!important; }
+[data-testid="stForm"] input { background:transparent; color:var(--text);
+    border:0; font-size:1.04rem; }
+[data-testid="stFormSubmitButton"] button { background:var(--accent); color:#172238;
+    border:0; border-radius:10px; font-weight:800; }
+.ds-section { display:flex; align-items:baseline; justify-content:space-between;
+    margin:1.5rem 0 .6rem; gap:1rem; }
+.ds-section h2 { font-size:1.35rem; margin:0; }
+.ds-section span { color:var(--muted); font-size:.85rem; }
+.ds-question { font-size:.94rem; margin-bottom:.7rem; }
+[data-testid="stMetric"] { background:linear-gradient(135deg,#1a2e4d,var(--panel));
+    border:1px solid var(--line); border-radius:13px; padding:1rem; min-height:105px; }
+[data-testid="stMetricValue"] { color:var(--text); font-weight:800; }
+[data-testid="stVerticalBlockBorderWrapper"]:has(.ds-panel-title) {
+    background:linear-gradient(145deg,#192b48,#112039); border:1px solid var(--line);
+    border-radius:14px; }
+.ds-panel-title { font-size:1.13rem; font-weight:800; margin-bottom:.5rem; }
+.ds-empty { margin-top:1.3rem; padding:2.5rem 1rem; text-align:center;
+    background:var(--panel); border:1px solid var(--line); border-radius:14px; }
+.ds-empty h2 { margin:0 0 .5rem; }
+.ds-empty p { color:var(--muted); margin:0; }
+[data-testid="stExpander"] { background:var(--panel)!important;
+    border:1px solid var(--line)!important; border-radius:12px!important; }
+[data-testid="stExpander"] summary { color:var(--text)!important; font-weight:700; }
+@media(max-width:760px) { .block-container { padding:.8rem .8rem 2rem; }
+    .ds-tab { display:none; } .ds-brand { font-size:1.35rem; }
+    .ds-source { font-size:.75rem; } }
+</style>
+""", unsafe_allow_html=True)
 
-# ---------------------------------------------------------------------------
-# Session state
-# ---------------------------------------------------------------------------
 
-def _toggle_metrics(key):
+def render_chart(spec: dict) -> None:
+    try:
+        st.vega_lite_chart(spec, width="stretch")
+    except Exception:
+        logger.exception("Chart rendering failed")
+        st.warning("The result was generated, but its chart could not be displayed.")
+
+
+def _toggle_metrics(key: str) -> None:
     st.session_state[key] = not st.session_state.get(key, False)
 
 
-def render_metrics(metrics):
+def render_metrics(metrics: dict | None) -> None:
     if not metrics:
         return
-    visibility_key = f"metrics_visible_{metrics['request_id']}"
-    visible = st.session_state.get(visibility_key, False)
-    st.button(
-        "Hide request details" if visible else "Show request details",
-        key=f"metrics_button_{metrics['request_id']}",
-        on_click=_toggle_metrics,
-        args=(visibility_key,),
-    )
+    key = f"metrics_visible_{metrics['request_id']}"
+    visible = st.session_state.get(key, False)
+    st.button("Hide request details" if visible else "Show request details",
+              key=f"metrics_button_{metrics['request_id']}",
+              on_click=_toggle_metrics, args=(key,))
     if not visible:
         return
-    with st.container():
+    with st.container(border=True):
         st.write(f"Response time: {metrics['latency_seconds']:.2f} seconds")
         st.write(f"Tokens: {metrics['input_tokens']:,} input / {metrics['output_tokens']:,} output")
-        cost = metrics.get('estimated_cost_usd')
-        st.write(f"Estimated API cost: ${cost:.6f}" if cost is not None else "Estimated API cost: unavailable (missing usage or pricing)")
+        cost = metrics.get("estimated_cost_usd")
+        st.write(f"Estimated API cost: ${cost:.6f}" if cost is not None
+                 else "Estimated API cost: unavailable (missing usage or pricing)")
         st.write(f"Model calls: {metrics['model_calls']}")
-        if metrics.get('cache_hit'):
+        if metrics.get("cache_hit"):
             st.caption("Cached answer; no new API calls.")
-        if metrics.get('calls'):
-            st.dataframe(metrics['calls'], width="stretch")
+        if metrics.get("calls"):
+            st.dataframe(metrics["calls"], width="stretch")
         st.caption("Estimates cover reported API usage only. Unreported SDK retries and infrastructure costs are excluded.")
+
+
+def _metric_cards(rows: list[dict]) -> None:
+    """Display only numeric values returned by a single-row query."""
+    if len(rows) != 1:
+        return
+    values = [(key, value) for key, value in rows[0].items()
+              if isinstance(value, Real) and not isinstance(value, bool)]
+    if not values:
+        return
+    st.markdown('<div class="ds-section"><h2>Key figures</h2><span>From this query</span></div>',
+                unsafe_allow_html=True)
+    for column, (key, value) in zip(st.columns(min(len(values), 4)), values[:4]):
+        number = f"{value:,}" if isinstance(value, int) else f"{value:,.2f}"
+        column.metric(key.replace("_", " ").title(), number)
+
+
+def _render_status(status: str | None) -> None:
+    if status == "passed":
+        st.success("Verified by automated review")
+    elif status == "qualified":
+        st.warning("Automated verification was unavailable. This answer has not been independently verified.")
+    elif status == "data_only":
+        st.info("The AI interpretation was not verified. Inspect the available results below.")
+    elif status == "blocked":
+        st.warning("This request could not be verified.")
+
+
+def render_answer(message: dict) -> None:
+    """Render the latest answer as a data-driven dashboard."""
+    forecast = message.get("forecast_used", False)
+    chart = message.get("forecast_chart") if forecast else message.get("chart_spec")
+    panel_title = "Result" if message.get("evaluation_status") in {"data_only", "blocked"} else "AI insight"
+    rows = message.get("rows") or []
+    forecast_rows = message.get("forecast_rows") or []
+    st.markdown('<div class="ds-section"><h2>Analysis</h2><span>'
+                + ("Forecast" if forecast else "Historical data") + '</span></div>',
+                unsafe_allow_html=True)
+    if message.get("question"):
+        st.markdown('<div class="ds-question">' + html.escape(message["question"])
+                    + '</div>', unsafe_allow_html=True)
+    _render_status(message.get("evaluation_status"))
+    if not forecast:
+        _metric_cards(rows)
+    if chart:
+        visual, insight = st.columns([1.8, 1], gap="large")
+        with visual:
+            with st.container(border=True):
+                st.markdown('<div class="ds-panel-title">Visual overview</div>',
+                            unsafe_allow_html=True)
+                render_chart(chart)
+                if message.get("chart_note"):
+                    st.caption(message["chart_note"])
+        with insight:
+            with st.container(border=True):
+                st.markdown(f'<div class="ds-panel-title">{panel_title}</div>',
+                            unsafe_allow_html=True)
+                st.markdown(message.get("content") or "No interpretation available.")
+    else:
+        with st.container(border=True):
+            st.markdown(f'<div class="ds-panel-title">{panel_title}</div>',
+                        unsafe_allow_html=True)
+            st.markdown(message.get("content") or "No interpretation available.")
+        if message.get("chart_note"):
+            st.caption(message["chart_note"])
+    if forecast_rows:
+        st.markdown('<div class="ds-section"><h2>Forecast values</h2></div>',
+                    unsafe_allow_html=True)
+        st.dataframe(forecast_rows, width="stretch", hide_index=True)
+    if rows:
+        with st.expander("View data", expanded=message.get("evaluation_status") == "data_only"):
+            st.dataframe(rows, width="stretch", hide_index=True)
+    if message.get("sql"):
+        with st.expander("View SQL"):
+            st.code(message["sql"], language="sql")
+    render_metrics(message.get("metrics"))
 
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
-# ---------------------------------------------------------------------------
-# Render history
-# ---------------------------------------------------------------------------
 
-for msg in st.session_state.messages:
-    with st.chat_message(msg["role"]):
-        if msg.get("forecast_used"):
-            st.markdown('<div class="forecast-pill">🔮 FORECAST</div>', unsafe_allow_html=True)
-        if msg.get("evaluation_status") == "qualified":
-            st.warning("Automated verification was unavailable. This answer has not been independently verified.")
-        st.markdown(msg["content"])
-        render_metrics(msg.get("metrics"))
-        if msg.get("sql") and not msg.get("forecast_used"):
-            with st.expander("SQL Query"):
-                st.code(msg["sql"], language="sql")
-        if msg.get("rows") and not msg.get("forecast_used"):
-            with st.expander("Data", expanded=msg.get("evaluation_status") == "data_only"):
-                st.dataframe(msg["rows"], width="stretch")
-        if msg.get("chart_note"):
-            st.caption(msg["chart_note"])
-        if msg.get("chart_spec"):
-            render_chart(msg["chart_spec"])
-        if msg.get("forecast_chart"):
-            render_chart(msg["forecast_chart"])
-        if msg.get("forecast_rows"):
-            with st.expander("Forecast values"):
-                st.dataframe(msg["forecast_rows"], width="stretch")
+st.markdown("""
+<div class="ds-header">
+  <div class="ds-brand"><span class="ds-mark">▂▅▇</span>DataSage</div>
+  <div class="ds-tab">Dashboard</div>
+  <div class="ds-source">● Data source ready</div>
+</div>
+<div class="ds-intro">
+  <div class="ds-eyebrow">Executive analytics</div>
+  <h1>Ask your data. See the evidence.</h1>
+  <p>Explore your connected dataset with reviewed SQL, clear answers, and visual results.</p>
+</div>
+""", unsafe_allow_html=True)
 
+with st.form("ask_form", clear_on_submit=True):
+    prompt_column, submit_column = st.columns([8, 1], vertical_alignment="bottom")
+    with prompt_column:
+        question = st.text_input("Business question", label_visibility="collapsed",
+                                 placeholder="Ask DataSage about your business data...")
+    with submit_column:
+        submitted = st.form_submit_button("Ask", width="stretch")
 
-# ---------------------------------------------------------------------------
-# Chat input + main loop
-# ---------------------------------------------------------------------------
-
-question = st.chat_input("Ask a question about your data...")
-if question:
+if submitted and question.strip():
+    question = question.strip()
     st.session_state.messages.append({"role": "user", "content": question})
-    with st.chat_message("user"):
-        st.write(question)
-
-    with st.chat_message("assistant"):
+    try:
         with st.spinner("Analyzing your data..."):
-            # Forecast intent is owned exclusively by the orchestrator in
-            # bi.py; the presentation layer never forces or re-derives it.
+            # Forecast routing remains owned by the pipeline.
             result = ask_bi_agent(question)
-
-        forecast_used = result.get("forecast_used", False)
-        forecast = result.get("forecast")
-        forecast_error = result.get("forecast_error")
-
-        if forecast_used:
-            st.markdown('<div class="forecast-pill">🔮 FORECAST</div>', unsafe_allow_html=True)
-        if result.get("evaluation", {}).get("status") == "qualified":
-            st.warning("Automated verification was unavailable. This answer has not been independently verified.")
-        st.markdown(result["summary"])
-        render_metrics(result.get("metrics"))
-
-        if result.get("sql") and not forecast_used:
-            with st.expander("SQL Query"):
-                st.code(result["sql"], language="sql")
-
-        if result.get("rows") and not forecast_used:
-            with st.expander("Data", expanded=result.get("evaluation", {}).get("status") == "data_only"):
-                st.dataframe(result["rows"], width="stretch")
-
-        # Forecast responses have their own combined history + forecast chart.
-        if result.get("chart_note") and not forecast_used:
-            st.caption(result["chart_note"])
-        if result.get("chart_spec") and not forecast_used:
-            render_chart(result["chart_spec"])
-
-        if forecast is not None:
-            st.markdown("---")
-            if forecast.get("chart_spec"):
-                render_chart(forecast["chart_spec"])
-            if forecast.get("rows"):
-                with st.expander("Forecast values", expanded=True):
-                    st.dataframe(forecast["rows"], width="stretch")
-        elif forecast_error:
-            st.markdown("---")
-            st.markdown(forecast_error)
-
+    except Exception:
+        logger.exception("DataSage request failed")
+        result = {"summary": "The assistant is temporarily unavailable. Please try again shortly.",
+                  "evaluation": {"status": "blocked"}}
+    forecast = result.get("forecast") or {}
+    summary = result.get("summary") or "No answer was available."
     st.session_state.messages.append({
-        "role": "assistant",
-        "content": result["summary"],
-        "metrics": result.get("metrics"),
-        "sql": result.get("sql"),
-        "chart_spec": result.get("chart_spec"),
-        "chart_note": result.get("chart_note"),
+        "role": "assistant", "question": question, "content": summary,
+        "metrics": result.get("metrics"), "sql": result.get("sql"),
+        "chart_spec": result.get("chart_spec"), "chart_note": result.get("chart_note"),
         "rows": result.get("rows"),
         "evaluation_status": result.get("evaluation", {}).get("status"),
-        "forecast_used": forecast_used,
-        "forecast_chart": forecast.get("chart_spec") if forecast else None,
-        "forecast_rows": forecast.get("rows") if forecast else None,
+        "forecast_used": result.get("forecast_used", False),
+        "forecast_chart": forecast.get("chart_spec"), "forecast_rows": forecast.get("rows"),
     })
 
-st.markdown("</div></div>", unsafe_allow_html=True)
+answers = [msg for msg in st.session_state.messages if msg.get("role") == "assistant"]
+if answers:
+    render_answer(answers[-1])
+    if len(answers) > 1:
+        with st.expander(f"Previous questions ({len(answers) - 1})"):
+            for previous in reversed(answers[:-1]):
+                st.markdown(f"**{html.escape(previous.get('question', 'Question'))}**")
+                st.markdown(previous.get("content") or "No answer was available.")
+                st.divider()
+else:
+    st.markdown("""
+    <div class="ds-empty"><h2>Your analysis starts here</h2>
+    <p>Ask a question above to see a chart, an explanation, and the data behind it.</p></div>
+    """, unsafe_allow_html=True)

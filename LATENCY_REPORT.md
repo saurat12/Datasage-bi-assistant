@@ -1,5 +1,9 @@
 # Synthetic live latency sample
 
+The subsequent SQL correctness investigation and matched before/after review
+results are documented in [SQL_REVIEW_INVESTIGATION.md](SQL_REVIEW_INVESTIGATION.md).
+The measurements below are the original baseline and have not been rewritten.
+
 Twenty live requests, five per category, used a temporary SQLite fixture with 36 monthly periods and two regions. The fixture was deleted after the run. No production database was queried. Times are seconds relative to each request's start and are rounded to four decimals. Stage duration sums are not end-to-end latency because calls can overlap. A measured gap includes graph work and other code outside the instrumented spans; it is not an attributed bottleneck.
 
 The bounded sample made 107 model calls, with 143,743 reported input tokens and 15,289 output tokens. Estimated API cost was $0.027538 for these 20 requests. An initial sandboxed connection attempt failed before this sample and is excluded. Outcomes were 5 `passed`, 13 `data_only`, and 2 `blocked`. The fixture, network conditions, and small sample limit how far these timings can be generalized.

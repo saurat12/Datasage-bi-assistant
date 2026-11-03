@@ -11,6 +11,12 @@ from test_database_gateway import _pipeline_functions
 _classify_chart_type = _pipeline_functions({'_classify_chart_type'}, {
     're': re, 'json': json, 'pd': pd, 'Optional': Optional,
 })['_classify_chart_type']
+_simple_bar_chart = _pipeline_functions({'_simple_bar_chart'}, {
+    'pd': pd, 'List': list, 'Dict': dict, 'Any': object, 'Optional': Optional,
+})['_simple_bar_chart']
+_regional_product_chart = _pipeline_functions({'_regional_product_chart'}, {
+    'pd': pd, 'List': list, 'Dict': dict, 'Any': object, 'Optional': Optional,
+})['_regional_product_chart']
 
 
 @pytest.mark.parametrize('question, expected', [
@@ -64,3 +70,36 @@ def test_share_counts_categories_instead_of_dates(date_column, category_count, e
 def test_share_with_only_date_and_metric_defers():
     assert _classify_chart_type('Percentage of total',
                                 [{'period': '2017-01', 'sales': 10}]) is None
+
+
+def test_simple_category_metric_chart_is_complete_and_bounded():
+    rows = [{'product_name': f'Product {i}', 'total_sales': float(i)}
+            for i in range(100)]
+    spec, note = _simple_bar_chart(rows)
+    assert spec['mark'] == 'bar'
+    assert spec['encoding']['x']['field'] == 'total_sales'
+    assert spec['encoding']['y']['field'] == 'product_name'
+    assert len(spec['data']['values']) == 20
+    assert spec['data']['values'][0]['total_sales'] == 99.0
+    assert '20 of 100' in note
+
+
+@pytest.mark.parametrize('rows', [
+    [{'period': '2016-06', 'total_sales': 100}],
+    [{'product_name': 'Desk', 'total_sales': None}],
+    [{'product_name': 'Desk', 'total_sales': 100, 'region': 'East'}],
+])
+def test_simple_bar_chart_defers_when_shape_is_not_categorical_metric(rows):
+    assert _simple_bar_chart(rows) == (None, None)
+
+
+def test_regional_product_chart_keeps_both_dimensions():
+    rows = [{'region': region, 'product_name': f'Product {i}', 'total_sales': i}
+            for region in ('East', 'West') for i in range(12)]
+    spec, note = _regional_product_chart(rows)
+    assert spec['facet']['field'] == 'region'
+    assert spec['spec']['encoding']['y']['field'] == 'product_name'
+    assert spec['spec']['encoding']['x']['field'] == 'total_sales'
+    assert len(spec['data']['values']) == 20
+    assert '10 products per region' in note
+    assert _regional_product_chart([{'region': 'East', 'total_sales': 1}]) == (None, None)
