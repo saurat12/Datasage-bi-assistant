@@ -14,6 +14,7 @@ from __future__ import annotations
 import re
 import warnings
 from dataclasses import dataclass, field
+from functools import lru_cache
 from typing import Optional
 
 import numpy as np
@@ -289,7 +290,7 @@ def _infer_frequency(dates: pd.Series) -> tuple[str, int]:
 # Modeling
 # ---------------------------------------------------------------------------
 
-def _fit_and_forecast(
+def _fit_and_forecast_uncached(
     series: pd.Series,
     periods: int,
     seasonal_period: int,
@@ -404,6 +405,28 @@ def _fit_and_forecast(
     steps = np.arange(1, periods + 1)
     band = 1.96 * sigma * np.sqrt(steps)
     return point, point - band, point + band, "Naive drift"
+
+
+@lru_cache(maxsize=32)
+def _cached_fit(values: bytes, length: int, periods: int, seasonal_period: int):
+    """Reuse identical fits within this process, including backtest windows."""
+    series = pd.Series(np.frombuffer(values, dtype=np.float64, count=length).copy())
+    return _fit_and_forecast_uncached(series, periods, seasonal_period)
+
+
+def _fit_and_forecast(
+    series: pd.Series,
+    periods: int,
+    seasonal_period: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, str]:
+    """Return independent arrays so callers cannot mutate cached forecasts."""
+    values = np.ascontiguousarray(series.to_numpy(dtype=np.float64))
+    if len(values) > 10000 or periods > 1000:
+        return _fit_and_forecast_uncached(series, periods, seasonal_period)
+    point, lower, upper, method = _cached_fit(
+        values.tobytes(), len(values), periods, seasonal_period,
+    )
+    return point.copy(), lower.copy(), upper.copy(), method
 
 
 def _model_warnings(methods: list[str], seasonal_period: int) -> list[str]:

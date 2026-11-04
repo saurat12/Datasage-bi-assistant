@@ -1,6 +1,7 @@
 import json
 import re
 from typing import Optional
+from types import SimpleNamespace
 
 import pandas as pd
 import pytest
@@ -14,9 +15,9 @@ _classify_chart_type = _pipeline_functions({'_classify_chart_type'}, {
 _simple_bar_chart = _pipeline_functions({'_simple_bar_chart'}, {
     'pd': pd, 'List': list, 'Dict': dict, 'Any': object, 'Optional': Optional,
 })['_simple_bar_chart']
-_regional_product_chart = _pipeline_functions({'_regional_product_chart'}, {
-    'pd': pd, 'List': list, 'Dict': dict, 'Any': object, 'Optional': Optional,
-})['_regional_product_chart']
+_chart_spec_issue = _pipeline_functions({'_chart_spec_issue'}, {
+    'Any': object, 'List': list, 'Dict': dict, 'Optional': Optional,
+})['_chart_spec_issue']
 
 
 @pytest.mark.parametrize('question, expected', [
@@ -93,13 +94,47 @@ def test_simple_bar_chart_defers_when_shape_is_not_categorical_metric(rows):
     assert _simple_bar_chart(rows) == (None, None)
 
 
-def test_regional_product_chart_keeps_both_dimensions():
-    rows = [{'region': region, 'product_name': f'Product {i}', 'total_sales': i}
-            for region in ('East', 'West') for i in range(12)]
-    spec, note = _regional_product_chart(rows)
-    assert spec['facet']['field'] == 'region'
-    assert spec['spec']['encoding']['y']['field'] == 'product_name'
-    assert spec['spec']['encoding']['x']['field'] == 'total_sales'
-    assert len(spec['data']['values']) == 20
-    assert '10 products per region' in note
-    assert _regional_product_chart([{'region': 'East', 'total_sales': 1}]) == (None, None)
+def test_chart_spec_rejects_missing_fields_and_empty_rows():
+    spec = {'mark': 'line', 'encoding': {
+        'x': {'field': 'period'}, 'y': {'field': 'revenue'},
+    }}
+    assert _chart_spec_issue(spec, [{'period': '2016-05', 'total_sales': 100}])
+    assert _chart_spec_issue(spec, [])
+    assert _chart_spec_issue(spec, [{'period': '2016-05', 'revenue': None}])
+    assert _chart_spec_issue({**spec, 'transform': [{'filter': 'datum.revenue > 1000'}]},
+                             [{'period': '2016-05', 'revenue': 100}])
+
+
+def test_chart_spec_accepts_returned_fields():
+    spec = {'mark': 'line', 'encoding': {
+        'x': {'field': 'period'}, 'y': {'field': 'revenue'},
+        'tooltip': [{'field': 'period'}, {'field': 'revenue'}],
+    }}
+    assert _chart_spec_issue(spec, [{'period': '2016-05', 'revenue': 100}]) is None
+
+
+def test_generated_chart_uses_returned_rows_and_visible_line_points():
+    rows = [{'period': '2016-06', 'revenue': 90}]
+    model_spec = {'data': {'values': [{'period': '2016-06', 'revenue': 999}]},
+                  'mark': 'line', 'encoding': {
+                      'x': {'field': 'period'}, 'y': {'field': 'revenue'},
+                  }}
+    response = SimpleNamespace(choices=[SimpleNamespace(
+        message=SimpleNamespace(content=json.dumps(model_spec)))])
+    nodes = _pipeline_functions({'generate_chart_spec'}, {
+        'List': list, 'Dict': dict, 'Any': object, 'Optional': Optional,
+        'settings': SimpleNamespace(chart_sample_rows=100),
+        '_safe_rows_for_llm': lambda data, limit: data[:limit],
+        '_simple_bar_chart': lambda data: (None, None),
+        '_downsample_for_chart': lambda data: (data, False),
+        '_classify_chart_type': lambda question, data: 'line',
+        '_chart_spec_issue': _chart_spec_issue,
+        'tracked_call': lambda *args, **kwargs: response,
+        '_viz_client': SimpleNamespace(chat=SimpleNamespace(
+            completions=SimpleNamespace(create=lambda **kwargs: response))),
+        'json': json, 're': re,
+    })
+    chart, note = nodes['generate_chart_spec'](rows, 'Revenue in June')
+    assert chart['data']['values'] == rows
+    assert chart['mark'] == {'type': 'line', 'point': True}
+    assert note is None

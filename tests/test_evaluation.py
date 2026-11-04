@@ -293,6 +293,8 @@ def test_review_fallback_preserves_rows_without_ai_analysis():
     assert not result['evaluation']['passed']
     assert result['rows'] == [{'monthly_orders': 10}]
     assert 'Unverified claim' not in result['summary']
+    assert 'Open the Data tab' in result['summary']
+    assert 'below' not in result['summary']
     assert nodes['route_after_evaluation'](result) == 'end'
 
 
@@ -484,7 +486,7 @@ def test_forecast_sql_review_rules_distinguish_history_aggregation_from_predicti
     assert 'do not require an explicit past-date' in rules
 
 
-def test_sql_verdict_format_failure_remains_distinct_from_content_rejection():
+def test_sql_all_true_verdict_normalizes_false_passed_without_retry():
     from evaluation import SQL_CHECKS
 
     invalid = json.dumps({
@@ -499,9 +501,25 @@ def test_sql_verdict_format_failure_remains_distinct_from_content_rejection():
         'issues': ['Wrong aggregation'], 'retry_target': 'sql_agent',
         'fix_instructions': 'Use the requested aggregate.',
     })
-    with pytest.raises(ValueError, match='contradicts'):
-        parse_verdict(invalid, SQL_CHECKS, {'sql_agent'})
+    assert parse_verdict(invalid, SQL_CHECKS, {'sql_agent'})['passed'] is True
+    calls = []
+    model = SimpleNamespace(invoke=lambda messages: (
+        calls.append(messages) or SimpleNamespace(content=invalid)))
+    assert invoke_evaluator(model, 'Review', {'approved_schema': {'orders': {'total_sales': 'REAL'}}},
+                            SQL_CHECKS, {'sql_agent'})['passed'] is True
+    assert len(calls) == 1
     assert parse_verdict(rejected, SQL_CHECKS, {'sql_agent'})['passed'] is False
+
+
+@pytest.mark.parametrize('extra', [
+    {'issues': ['A real defect']},
+    {'retry_target': 'sql_agent', 'fix_instructions': 'Fix the query.'},
+])
+def test_sql_normalization_does_not_hide_rejection_signals(extra):
+    verdict = approved(SQL_CHECKS)
+    verdict.update(passed=False, **extra)
+    with pytest.raises(ValueError, match='contradicts'):
+        parse_verdict(json.dumps(verdict), SQL_CHECKS, {'sql_agent'})
 
 
 @pytest.mark.parametrize(('sql', 'metric', 'review_rejects'), [
@@ -557,34 +575,3 @@ def test_grouped_forecast_review_keeps_real_errors_blocked(sql, metric, review_r
     expected_pass = sql.startswith("SELECT strftime") and not review_rejects and (
         'COUNT' not in sql and 'WHERE' not in sql and 'GROUP BY period, region' in sql)
     assert verdict['critic_approved'] is expected_pass
-
-
-def test_driver_review_rejects_region_total_without_product_breakdown():
-    from test_database_gateway import _pipeline_functions
-    from evaluation import SQL_CHECKS, SQL_EVALUATOR_PROMPT, failed_verdict, sql_review_rules
-    from query_planning import metric_sql_issue
-    from sql_safety import split_statements
-
-    schema = {'orders': {'order_date': 'TEXT', 'region': 'TEXT',
-                         'product_name': 'TEXT', 'total_sales': 'REAL'}}
-
-    def approved(*args, **kwargs):
-        return dict(passed=True, checks={key: True for key in SQL_CHECKS},
-                    issues=[], retry_target=None, fix_instructions='',
-                    requested_metric_column='total_sales')
-
-    node = _pipeline_functions({'critic_node'}, {
-        'metric_sql_issue': metric_sql_issue, 'SQL_EVALUATOR_PROMPT': SQL_EVALUATOR_PROMPT,
-        'sql_review_rules': sql_review_rules, 'SQL_CHECKS': SQL_CHECKS,
-        'failed_verdict': failed_verdict, '_split_statements': split_statements,
-        're': re, 'json': json, 'APPROVED_SCHEMA': json.dumps(schema),
-        'invoke_evaluator': approved, 'critic_llm': object(),
-    })['critic_node']
-    state = {'question': "What's driving revenue in each region in June 2015?",
-             'forecast': False, 'retry_count': 0}
-    region_only = node({**state, 'sql': 'SELECT region, SUM(total_sales) FROM orders GROUP BY region'})
-    assert region_only['critic_approved'] is False
-    assert 'product_name' in region_only['critic_reason']
-    by_product = node({**state, 'sql': 'SELECT region, product_name, SUM(total_sales) '
-                       'FROM orders GROUP BY region, product_name'})
-    assert by_product['critic_approved'] is True

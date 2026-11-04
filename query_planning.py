@@ -1,6 +1,8 @@
 """Query Planning: Conservative templates for clear historical and forecast questions."""
 
 import re
+import calendar
+from datetime import date, timedelta
 
 
 _SQL_TOKEN = re.compile(r'"(?:""|[^"])*"|`(?:``|[^`])*`|\[[^]]*\]|[A-Za-z_]\w*|[(),.*]')
@@ -157,45 +159,6 @@ def metric_sql_issue(metric_column, sql):
     return f"The SQL aggregation does not use the requested metric column {metric_column!r}."
 
 
-def requested_revenue_driver_dimensions(question, schema):
-    """Orders-schema contract for explicit revenue-driver breakdown questions.
-
-    The normal SQL agent handles other wording and other datasets. This scoped
-    contract prevents a regional total from replacing product contributions.
-    """
-    columns = schema.get('orders', {})
-    if not {'order_date', 'product_name', 'region', 'total_sales'} <= set(columns):
-        return ()
-    if not re.search(r"\bwhat(?:'s| is)\s+driving\b.*\brevenue\b", question, re.IGNORECASE):
-        return ()
-    # Growth needs a comparison period; an explicitly named other dimension
-    # should not be replaced with products by this narrow contract.
-    if re.search(r'\b(?:growth|change|increase|decrease|decline|trend|category|segment)\b',
-                 question, re.IGNORECASE):
-        return ()
-    if re.search(r'\b(?:in\s+each|each|per|by)\s+region\b', question, re.IGNORECASE):
-        return ('region', 'product_name')
-    return ('product_name',)
-
-
-def revenue_driver_sql_issue(sql, dimensions):
-    """Check that simple aggregate SQL keeps every requested driver dimension."""
-    if not dimensions or not sql or not sql.lstrip().lower().startswith('select'):
-        return None
-    projection = re.search(r'\bSELECT\b(.*?)\bFROM\b', sql, re.IGNORECASE | re.DOTALL)
-    grouping = re.search(r'\bGROUP\s+BY\b(.*?)(?=\bORDER\s+BY\b|\bLIMIT\b|;|$)',
-                         sql, re.IGNORECASE | re.DOTALL)
-    if not projection or not grouping:
-        return 'Revenue-driver SQL must aggregate by the requested contributor dimensions.'
-    missing = [column for column in dimensions if not (
-        re.search(rf'\b{re.escape(column)}\b', projection.group(1), re.IGNORECASE)
-        and re.search(rf'\b{re.escape(column)}\b', grouping.group(1), re.IGNORECASE)
-    )]
-    if missing:
-        return 'Revenue-driver SQL must SELECT and GROUP BY ' + ', '.join(missing) + '.'
-    return None
-
-
 def historical_monthly_order_count_sql(question, schema):
     """Orders-dataset optimization only; return None for any other schema/scope.
 
@@ -218,12 +181,130 @@ def historical_monthly_order_count_sql(question, schema):
             + "' GROUP BY period ORDER BY period ASC;")
 
 
+def revenue_change_sql(question, schema):
+    """Plan a bounded, read-only month comparison for the supported orders grain.
+
+    Return None when the period, intent, or required columns are unclear; the
+    general SQL agent then handles the request. This diagnostic is an orders
+    capability, not a claim about arbitrary datasets or causal attribution.
+    """
+    columns = schema.get('orders', {})
+    required = {'order_date', 'order_id', 'total_sales', 'product_name'}
+    if not required <= set(columns):
+        return None
+    if not re.search(r'\b(?:revenue|sales)\b', question, re.IGNORECASE):
+        return None
+    if not re.search(r'\b(?:why|driv\w*|caus\w*|led|explain|reason\w*)\b',
+                     question, re.IGNORECASE):
+        return None
+    if not re.search(r'\b(?:drop\w*|fell|fall\w*|declin\w*|decreas\w*|dip\w*|increas\w*|ris\w*|rose|grow\w*|growth)\b', question, re.IGNORECASE):
+        return None
+    names = '|'.join(list(calendar.month_name[1:]) + list(calendar.month_abbr[1:]))
+    months = list(re.finditer(rf'\b({names})\s+([12]\d{{3}})\b', question, re.IGNORECASE))
+    if len(months) != 1:
+        return None
+    target = date(int(months[0].group(2)),
+                  next(i for i in range(1, 13) if months[0].group(1).casefold()
+                       in (calendar.month_name[i].casefold(),
+                           calendar.month_abbr[i].casefold())), 1)
+    if target.year < 2:
+        return None
+    prior = (target - timedelta(days=1)).replace(day=1)
+    after = (date(target.year + 1, 1, 1) if target.month == 12
+             else date(target.year, target.month + 1, 1))
+    # Other dates or requested dimensions need the general planner so this
+    # template cannot silently discard a comparison or filter.
+    if len(re.findall(r'\b[12]\d{3}\b', question)) != 1 or re.search(
+            r'\b(?:region|state|city|segment|customer|category|quarter|year)\b',
+            question, re.IGNORECASE):
+        return None
+    # This bounded template has no filters other than the compared months.
+    # Extra terms may denote an unknown product, location, or other scope.
+    allowed = set('why what s did was were is there a the revenue sales drop dropped '
+                  'dip dipped decline declined decrease decreased increase increased '
+                  'rise rose grow grew growth fell fall falling driving drove cause '
+                  'caused led explain reason reasons behind in for during of month '
+                  'monthly compared to previous prior last'.split()).union(
+                      name.casefold() for name in
+                      list(calendar.month_name[1:]) + list(calendar.month_abbr[1:]))
+    if any(word not in allowed and word != str(target.year)
+           for word in re.findall(r'[a-z]+|\d+', question.casefold())):
+        return None
+    unit = 'SUM(quantity)' if 'quantity' in columns else 'NULL'
+    discount = 'AVG(discount)' if 'discount' in columns else 'NULL'
+    discount_rows = ("UNION ALL SELECT period, 'discount' AS breakdown, "
+                     "CASE WHEN discount > 0 THEN 'Discounted' ELSE 'Full price' END AS item, "
+                     "SUM(total_sales) AS revenue, COUNT(DISTINCT order_id) AS order_count, "
+                     f"{unit} AS units, {discount} AS avg_discount, "
+                     "NULL AS revenue_per_order, NULL AS revenue_per_unit "
+                     "FROM base WHERE discount IS NOT NULL "
+                     "GROUP BY period, item ") if 'discount' in columns else ''
+    return (
+        "WITH base AS (SELECT strftime('%Y-%m', order_date) AS period, "
+        "order_id, product_name, total_sales, "
+        + ("quantity" if 'quantity' in columns else "NULL AS quantity") + ", "
+        + ("discount" if 'discount' in columns else "NULL AS discount")
+        + " FROM orders WHERE order_date >= '" + prior.isoformat()
+        + "' AND order_date < '" + after.isoformat() + "'), "
+        "periods AS (SELECT '" + prior.strftime('%Y-%m')
+        + "' AS period UNION ALL SELECT '" + target.strftime('%Y-%m')
+        + "' AS period), "
+        "products AS (SELECT period, product_name AS item, SUM(total_sales) AS revenue, "
+        "COUNT(DISTINCT order_id) AS order_count, " + unit + " AS units, "
+        + discount + " AS avg_discount FROM base WHERE product_name IS NOT NULL "
+        "GROUP BY period, product_name), "
+        "monthly_change AS (SELECT SUM(CASE WHEN period = '"
+        + target.strftime('%Y-%m') + "' THEN total_sales ELSE -total_sales END) "
+        "AS delta FROM base), "
+        "top_products AS (SELECT item FROM products CROSS JOIN monthly_change "
+        "GROUP BY item ORDER BY CASE WHEN MAX(monthly_change.delta) < 0 THEN "
+        "SUM(CASE WHEN period = '" + target.strftime('%Y-%m')
+        + "' THEN revenue ELSE -revenue END) ELSE -SUM(CASE WHEN period = '"
+        + target.strftime('%Y-%m')
+        + "' THEN revenue ELSE -revenue END) END ASC LIMIT 4), "
+        "combined AS (SELECT period, 'overall' AS breakdown, 'All orders' AS item, "
+        "SUM(total_sales) AS revenue, COUNT(DISTINCT order_id) AS order_count, "
+        + unit + " AS units, " + discount + " AS avg_discount, "
+        "SUM(total_sales) / NULLIF(COUNT(DISTINCT order_id), 0) AS revenue_per_order "
+        + (", SUM(total_sales) / NULLIF(SUM(quantity), 0) AS revenue_per_unit "
+           if 'quantity' in columns else ", NULL AS revenue_per_unit ")
+        + "FROM base GROUP BY period UNION ALL "
+        "SELECT periods.period, 'product' AS breakdown, top_products.item, "
+        "COALESCE(products.revenue, 0) AS revenue, "
+        "COALESCE(products.order_count, 0) AS order_count, "
+        "COALESCE(products.units, 0) AS units, products.avg_discount, "
+        "NULL AS revenue_per_order, NULL AS revenue_per_unit "
+        "FROM top_products CROSS JOIN periods LEFT JOIN products "
+        "ON products.item = top_products.item AND products.period = periods.period "
+        + discount_rows
+        + ") SELECT period, breakdown, item, revenue, order_count, units, "
+        "avg_discount, revenue_per_order, revenue_per_unit, "
+        "LAG(revenue) OVER (PARTITION BY breakdown, item ORDER BY period) "
+        "AS previous_revenue, "
+        "revenue - LAG(revenue) OVER (PARTITION BY breakdown, item "
+        "ORDER BY period) AS revenue_change "
+        "FROM combined ORDER BY breakdown, item, period;"
+    )
+
+
 def forecast_history_sql(question, schema):
     # Orders-dataset optimization only; unknown schemas and vocabulary fall
     # through to the general SQL agent without applying this template.
     # Unknown words deliberately fall back to the normal generator, so filters
     # such as 'West', 'excluding returns' or 'using history since 2015' aren't lost.
-    words = re.findall(r"[a-z]+|\d+", question.lower())
+    # An absolute quarter names the forecast target, not a historical filter.
+    # Strip only one unambiguous target; comparisons and extra scope still
+    # fall through to general SQL generation.
+    quarter_target = re.compile(
+        r'\b(?:q[1-4]\s*(?:of\s+)?[12]\d{3}|'
+        r'(?:first|second|third|fourth|1st|2nd|3rd|4th)\s+quarter\s*(?:of\s+)?[12]\d{3}|'
+        r'[12]\d{3}\s+q[1-4])\b', re.IGNORECASE,
+    )
+    targets = list(quarter_target.finditer(question))
+    if len(targets) > 1:
+        return None
+    normalized = quarter_target.sub(' ', question) if targets else question
+    words = re.findall(r"[a-z]+|\d+", normalized.lower())
     allowed = set('what will would be the forecast forecasted forecasting predict predicted '
                   'prediction project projected projection estimate estimated total number '
                   'count of order orders revenue sales in for each every month months monthly '

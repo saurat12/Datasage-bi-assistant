@@ -47,32 +47,6 @@ def test_metric_contract_allows_detail_projection_but_not_substituted_column():
     )
 
 
-def test_revenue_driver_dimensions_follow_question_and_orders_schema():
-    from query_planning import requested_revenue_driver_dimensions, revenue_driver_sql_issue
-
-    schema = {'orders': {'order_date': 'TEXT', 'region': 'TEXT',
-                         'product_name': 'TEXT', 'total_sales': 'REAL'}}
-    single = "What's driving the revenue in June 2016?"
-    regional = "What's driving revenue in each region in June 2015?"
-    assert requested_revenue_driver_dimensions(single, schema) == ('product_name',)
-    assert requested_revenue_driver_dimensions(regional, schema) == ('region', 'product_name')
-    assert requested_revenue_driver_dimensions(regional, {'billing': schema['orders']}) == ()
-    assert requested_revenue_driver_dimensions('Revenue by region', schema) == ()
-    assert requested_revenue_driver_dimensions("What's driving revenue growth?", schema) == ()
-    assert requested_revenue_driver_dimensions("What's driving revenue by category?", schema) == ()
-
-    product_sql = ('SELECT product_name, SUM(total_sales) FROM orders '
-                   'GROUP BY product_name')
-    regional_sql = ('SELECT region, product_name, SUM(total_sales) FROM orders '
-                    'GROUP BY region, product_name')
-    assert revenue_driver_sql_issue(product_sql, ('product_name',)) is None
-    assert revenue_driver_sql_issue(regional_sql, ('region', 'product_name')) is None
-    assert revenue_driver_sql_issue('SELECT region, SUM(total_sales) FROM orders '
-                                    'GROUP BY region', ('region', 'product_name'))
-    assert revenue_driver_sql_issue('SELECT region, product_name, SUM(total_sales) '
-                                    'FROM orders GROUP BY region', ('region', 'product_name'))
-
-
 def test_sql_critic_accepts_detail_projection_and_rejects_missing_metric():
     from test_database_gateway import _pipeline_functions
     from evaluation import SQL_CHECKS, SQL_EVALUATOR_PROMPT, failed_verdict, sql_review_rules
@@ -277,6 +251,23 @@ def test_forecast_target_is_not_a_historical_filter():
 
 
 @pytest.mark.parametrize('question', [
+    'What will be the revenue in Q1 of 2018?',
+    'Forecast revenue for the first quarter of 2018',
+    'Predict sales for 2018 Q1',
+])
+def test_single_quarter_forecast_uses_full_history(question):
+    assert detect_forecast_intent(question)
+    assert extract_target_window(question)[2] == 'Q1 2018'
+    sql = forecast_history_sql(question, SCHEMA)
+    assert 'SUM(total_sales)' in sql
+    assert '2018' not in sql and 'WHERE' not in sql and 'LIMIT' not in sql
+
+
+def test_multiple_quarter_targets_do_not_use_single_target_template():
+    assert forecast_history_sql('Forecast revenue Q1 2018 Q1 2019', SCHEMA) is None
+
+
+@pytest.mark.parametrize('question', [
     'Forecast orders for West in 2018',
     'Forecast orders using history since 2015',
     'Forecast sales by region next year',
@@ -303,3 +294,28 @@ def test_statistical_fallback_is_limited_to_verified_history_plans():
     assert 'not actual' in summary
     state['sql_plan_verified'] = False
     assert 'statistical forecast' not in nodes['data_only_summary'](state)
+
+
+def test_approved_forecast_fallback_reports_target_total_without_claiming_verification():
+    from types import SimpleNamespace
+    from test_database_gateway import _pipeline_functions
+
+    summary = _pipeline_functions({'data_only_summary'}, {
+        'AccuracyMetrics': type('Metrics', (), {}),
+    })['data_only_summary']({
+        'forecast_result': SimpleNamespace(meta={
+            'target_window': 'Q1 2018', 'target_total': 60.0, 'warnings': [],
+        }),
+        'sql_plan_verified': True,
+    })
+    assert 'Q1 2018: 60.00' in summary
+    assert 'estimate' in summary and 'could not be verified' in summary
+
+
+def test_unverified_forecast_fallback_does_not_offer_sql_for_inspection():
+    from test_database_gateway import _pipeline_functions
+
+    summary = _pipeline_functions({'data_only_summary'}, {
+        'AccuracyMetrics': type('Metrics', (), {}),
+    })['data_only_summary']({'forecast': True, 'rows': []})
+    assert 'SQL' not in summary and 'no projection is shown' in summary

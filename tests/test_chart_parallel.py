@@ -115,6 +115,8 @@ def test_executor_starts_only_approved_historical_charts():
     assert scheduled[0][:3] == (base['sql'], approved['rows'], base['question'])
     nodes['executor_node']({**base, 'critic_approved': True, 'forecast': True})
     nodes['executor_node']({**base, 'critic_approved': False, 'review_fallback': True})
+    nodes['executor_node']({**base, 'critic_approved': True,
+                            'conversation_context': {'question': 'Previous insight'}})
     assert len(scheduled) == 1
 
 
@@ -174,6 +176,8 @@ def test_viz_node_uses_prepared_chart_and_never_returns_stale_one():
         assert nodes['viz_node'](changed)['chart_spec']['data'] == changed['rows']
         assert generated == [changed['rows']]
         assert nodes['viz_node']({**state, 'forecast': True})['chart_spec'] is None
+    assert nodes['viz_node']({**state, 'conversation_context':
+                              {'question': 'Previous insight'}})['chart_spec'] is None
 
 
 def test_graph_sql_retry_returns_chart_for_revised_rows_only():
