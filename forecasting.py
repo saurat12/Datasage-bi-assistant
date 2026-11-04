@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import re
 import warnings
+import logging 
+logger = logging.getLogger(__name__)
 from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import Optional
@@ -374,12 +376,9 @@ def _fit_and_forecast_uncached(
             band = 1.96 * sigma * np.sqrt(steps)
             return point, point - band, point + band, method
 
-    except Exception:
-        pass
-
-    except Exception:
-        pass
-
+    except Exception as exc:
+        logger.debug("ETS fitting failed: %s", exc)
+        # fall back to ARIMA or naive drift
     # --- Fallback: ARIMA ---
     try:
         from statsmodels.tsa.arima.model import ARIMA
