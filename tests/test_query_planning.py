@@ -302,6 +302,7 @@ def test_approved_forecast_fallback_reports_target_total_without_claiming_verifi
 
     summary = _pipeline_functions({'data_only_summary'}, {
         'AccuracyMetrics': type('Metrics', (), {}),
+        '_currency_display': lambda field, value: value,
     })['data_only_summary']({
         'forecast_result': SimpleNamespace(meta={
             'target_window': 'Q1 2018', 'target_total': 60.0, 'warnings': [],

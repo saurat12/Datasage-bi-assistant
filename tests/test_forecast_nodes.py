@@ -7,6 +7,25 @@ from test_database_gateway import _pipeline_functions
 from telemetry import measure_request
 
 
+def test_forecast_chart_formats_revenue_without_changing_values():
+    build = _pipeline_functions({'_build_forecast_chart_spec'}, {
+        'pd': pd, 'ForecastResult': object,
+    })['_build_forecast_chart_spec']
+    result = SimpleNamespace(
+        history=pd.DataFrame({'date': [pd.Timestamp('2017-12-01')],
+                              'value': [100.0]}),
+        forecast=pd.DataFrame({'date': [pd.Timestamp('2018-01-01')],
+                               'value': [120.0], 'lower': [110.0], 'upper': [130.0]}),
+    )
+    chart = build(result, currency=True)
+    assert all(layer['encoding']['y']['axis']['format'] == '$,.2f'
+               for layer in chart['layer'])
+    assert chart['layer'][0]['encoding']['tooltip'][1]['format'] == '$,.2f'
+    assert chart['layer'][0]['data']['values'][0]['value'] == 120.0
+    count_chart = build(result)
+    assert 'axis' not in count_chart['layer'][0]['encoding']['y']
+
+
 def _forecast_result():
     return SimpleNamespace(
         method='ETS (linear trend, none seasonality)',
@@ -22,7 +41,8 @@ def _forecast_nodes(forecast_series, interpret=lambda question: {'mode': 'defaul
         'extract_horizon': lambda question, default: (3, 'months'),
         'forecast_series': forecast_series,
         '_llm_interpret_horizon': interpret,
-        '_build_forecast_chart_spec': lambda result: {'mark': 'line'},
+        '_build_forecast_chart_spec': lambda result, *, currency=False: {'mark': 'line'},
+        '_is_currency_metric': lambda field: field in {'revenue', 'total_sales'},
         'MAX_FORECAST_RETRIES': 1,
     })
 
@@ -50,6 +70,7 @@ def test_forecast_followup_keeps_result_without_building_chart():
     result = nodes['forecast_agent_node']({
         'forecast': True, 'question': 'Forecast revenue',
         'conversation_context': {'question': 'Previous insight'},
+        'context_used': True,
         'rows': [{'period': '2017-01', 'revenue': 10.0}],
     })
     assert result['forecast_result'] is not None

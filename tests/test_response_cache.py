@@ -72,6 +72,7 @@ def test_cache_cannot_reuse_answer_from_another_conversation():
     def invoke(state, config):
         calls.append(state.get('conversation_context'))
         return {'evaluation': {'passed': True, 'status': 'passed'},
+                'context_used': True,
                 'summary': 'Verified answer', 'rows': [],
                 'sql': 'SELECT total_sales FROM orders',
                 'chart_spec': {'mark': 'bar'}, 'chart_note': 'comparison'}
@@ -118,10 +119,27 @@ def test_stale_context_cannot_hit_standalone_cache():
     result = ask('What about February?', context=stale)
 
     assert result['metrics']['cache_hit'] is False
-    assert result['followup_requested'] is True
-    assert result['sql'] is None
-    assert result['chart_spec'] is None
+    assert result['followup_requested'] is False
+    assert result['sql'] == 'SELECT total_sales FROM orders'
+    assert result['chart_spec'] == {'mark': 'bar'}
     assert calls == [None, None]
+
+
+def test_standalone_question_with_available_context_keeps_sql_and_chart():
+    def invoke(state, config):
+        assert state['conversation_context'] is not None
+        return {'evaluation': {'passed': True, 'status': 'passed'},
+                'context_used': False, 'summary': 'Verified answer', 'rows': [],
+                'sql': 'SELECT 10 AS revenue', 'chart_spec': {'mark': 'bar'}}
+
+    _, ask = _ask_with_stub(invoke, lambda: ('main-v1',))
+    prior = {'question': 'Revenue in 2015?', 'summary': 'Revenue rose.',
+             'passed': True, 'database_version': ('main-v1',)}
+    result = ask('What is revenue in 2017?', context=prior)
+
+    assert result['followup_requested'] is False
+    assert result['sql'] == 'SELECT 10 AS revenue'
+    assert result['chart_spec'] == {'mark': 'bar'}
 
 
 def test_no_cache_when_database_version_is_unavailable():

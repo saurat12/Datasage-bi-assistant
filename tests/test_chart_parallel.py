@@ -116,7 +116,8 @@ def test_executor_starts_only_approved_historical_charts():
     nodes['executor_node']({**base, 'critic_approved': True, 'forecast': True})
     nodes['executor_node']({**base, 'critic_approved': False, 'review_fallback': True})
     nodes['executor_node']({**base, 'critic_approved': True,
-                            'conversation_context': {'question': 'Previous insight'}})
+                            'conversation_context': {'question': 'Previous insight'},
+                            'context_used': True})
     assert len(scheduled) == 1
 
 
@@ -162,6 +163,7 @@ def test_viz_node_uses_prepared_chart_and_never_returns_stale_one():
     generated = []
     nodes = _pipeline_functions({'viz_node'}, {
         'chart_result': chart_result,
+        '_format_currency_chart': lambda spec: spec,
         'generate_chart_spec': lambda rows, question: (
             generated.append(rows) or {'mark': 'bar', 'data': rows}, None),
     })
@@ -177,7 +179,11 @@ def test_viz_node_uses_prepared_chart_and_never_returns_stale_one():
         assert generated == [changed['rows']]
         assert nodes['viz_node']({**state, 'forecast': True})['chart_spec'] is None
     assert nodes['viz_node']({**state, 'conversation_context':
-                              {'question': 'Previous insight'}})['chart_spec'] is None
+                              {'question': 'Previous insight'},
+                              'context_used': True})['chart_spec'] is None
+    assert nodes['viz_node']({**state, 'conversation_context':
+                              {'question': 'Previous insight'},
+                              'context_used': False})['chart_spec'] is not None
 
 
 def test_graph_sql_retry_returns_chart_for_revised_rows_only():
@@ -233,6 +239,7 @@ def test_graph_sql_retry_returns_chart_for_revised_rows_only():
         'summary_node': summary,
         'answer_evaluation_node': evaluate,
         'chart_result': chart_result,
+        '_format_currency_chart': lambda spec: spec,
     })
     graph = nodes['_build_graph']()
     with chart_request():

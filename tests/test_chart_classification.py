@@ -1,5 +1,7 @@
 import json
+import math
 import re
+from decimal import Decimal, InvalidOperation
 from typing import Optional
 from types import SimpleNamespace
 
@@ -8,6 +10,11 @@ import pytest
 
 from test_database_gateway import _pipeline_functions
 
+_currency_helpers = _pipeline_functions(
+    {'_is_currency_metric', '_currency_display', '_format_currency_chart'},
+    {'re': re, 'Decimal': Decimal, 'InvalidOperation': InvalidOperation},
+)
+
 
 _classify_chart_type = _pipeline_functions({'_classify_chart_type'}, {
     're': re, 'json': json, 'pd': pd, 'Optional': Optional,
@@ -15,9 +22,43 @@ _classify_chart_type = _pipeline_functions({'_classify_chart_type'}, {
 _simple_bar_chart = _pipeline_functions({'_simple_bar_chart'}, {
     'pd': pd, 'List': list, 'Dict': dict, 'Any': object, 'Optional': Optional,
 })['_simple_bar_chart']
+_simple_line_chart = _pipeline_functions({'_simple_line_chart'}, {
+    're': re, 'math': math, 'pd': pd, 'List': list, 'Dict': dict,
+    'Any': object, 'Optional': Optional,
+})['_simple_line_chart']
 _chart_spec_issue = _pipeline_functions({'_chart_spec_issue'}, {
     'Any': object, 'List': list, 'Dict': dict, 'Optional': Optional,
 })['_chart_spec_issue']
+
+
+def test_currency_display_and_chart_format_preserve_numeric_values():
+    metric = _currency_helpers['_is_currency_metric']
+    display = _currency_helpers['_currency_display']
+    chart_format = _currency_helpers['_format_currency_chart']
+    assert metric('total_sales') and metric('revenue') and metric('mrr')
+    assert not any(metric(name) for name in (
+        'order_count', 'sales_count', 'revenue_growth_percent', 'quantity'))
+    assert display('revenue', '129287.53') == '$129,287.53'
+    assert display('revenue_change', '-100.00') == '-$100.00'
+    assert display('order_count', '4') == '4'
+
+    rows = [{'period': '2016-01', 'revenue': 1250.0}]
+    spec = {'data': {'values': rows}, 'encoding': {
+        'x': {'field': 'period', 'type': 'ordinal'},
+        'y': {'field': 'revenue', 'type': 'quantitative'},
+        'tooltip': [{'field': 'period', 'type': 'ordinal'},
+                    {'field': 'revenue', 'type': 'quantitative'}],
+    }}
+    chart_format(spec)
+    assert spec['encoding']['y']['axis']['format'] == '$,.2f'
+    assert spec['encoding']['tooltip'][1]['format'] == '$,.2f'
+    assert spec['data']['values'] == rows
+
+    count_spec = {'encoding': {
+        'y': {'field': 'order_count', 'type': 'quantitative'},
+    }}
+    chart_format(count_spec)
+    assert 'axis' not in count_spec['encoding']['y']
 
 
 @pytest.mark.parametrize('question, expected', [
@@ -94,6 +135,63 @@ def test_simple_bar_chart_defers_when_shape_is_not_categorical_metric(rows):
     assert _simple_bar_chart(rows) == (None, None)
 
 
+@pytest.mark.parametrize('rows, color', [
+    ([{'period': '2015-01', 'revenue': 10.0},
+      {'period': '2015-02', 'revenue': 15.0}], None),
+    ([{'year': 2015, 'revenue': 10.0},
+      {'year': 2016, 'revenue': 15.0}], None),
+    ([{'period': '2015-01', 'region': 'East', 'revenue': 10.0},
+      {'period': '2015-01', 'region': 'West', 'revenue': 15.0}], 'region'),
+])
+def test_simple_line_chart_uses_returned_rows_and_keeps_groups(rows, color):
+    spec = _simple_line_chart(rows)
+    assert spec['data']['values'] == rows
+    assert spec['mark'] == {'type': 'line', 'point': True}
+    assert spec['encoding']['x']['type'] == 'ordinal'
+    assert spec['encoding']['x']['sort'] == 'ascending'
+    assert spec['encoding']['y']['field'] == 'revenue'
+    assert (spec['encoding'].get('color') or {}).get('field') == color
+    assert _chart_spec_issue(spec, rows) is None
+
+
+@pytest.mark.parametrize('rows', [
+    [{'period': 'January', 'revenue': 10.0}],
+    [{'period': '2015-99', 'revenue': 10.0}],
+    [{'period': '2015-01', 'revenue': None}],
+    [{'period': '2015-01', 'region': 'East', 'revenue': 10.0, 'orders': 2}],
+    [{'period': '2015-01', 'revenue': 10.0}, {'period': '2015-02'}],
+])
+def test_simple_line_chart_defers_on_ambiguous_or_incomplete_data(rows):
+    assert _simple_line_chart(rows) is None
+
+
+def test_known_time_series_skips_chart_model_call():
+    rows = [{'period': '2015-01', 'revenue': 10.0, 'private_note': 'hidden'},
+            {'period': '2015-02', 'revenue': 15.0, 'private_note': 'hidden'}]
+    permitted = [{key: value for key, value in row.items() if key != 'private_note'}
+                 for row in rows]
+    nodes = _pipeline_functions({'generate_chart_spec'}, {
+        'List': list, 'Dict': dict, 'Any': object, 'Optional': Optional,
+        'settings': SimpleNamespace(chart_sample_rows=75),
+        '_safe_rows_for_llm': lambda data, limit: [
+            {key: value for key, value in row.items() if key != 'private_note'}
+            for row in data[:limit]
+        ],
+        '_simple_bar_chart': lambda data: (None, None),
+        '_downsample_for_chart': lambda data: (data, False),
+        '_classify_chart_type': _classify_chart_type,
+        '_simple_line_chart': _simple_line_chart,
+        '_chart_spec_issue': _chart_spec_issue,
+        'tracked_call': lambda *args, **kwargs: pytest.fail('chart model called'),
+        'logger': SimpleNamespace(info=lambda *args: None),
+        **_currency_helpers,
+    })
+    spec, note = nodes['generate_chart_spec'](rows, 'Revenue trend in 2015?')
+    assert spec['data']['values'] == permitted
+    assert spec['encoding']['x']['field'] == 'period'
+    assert note is None
+
+
 def test_chart_spec_rejects_missing_fields_and_empty_rows():
     spec = {'mark': 'line', 'encoding': {
         'x': {'field': 'period'}, 'y': {'field': 'revenue'},
@@ -126,6 +224,7 @@ def test_generated_chart_uses_returned_rows_and_visible_line_points():
         'settings': SimpleNamespace(chart_sample_rows=100),
         '_safe_rows_for_llm': lambda data, limit: data[:limit],
         '_simple_bar_chart': lambda data: (None, None),
+        '_simple_line_chart': lambda data: None,
         '_downsample_for_chart': lambda data: (data, False),
         '_classify_chart_type': lambda question, data: 'line',
         '_chart_spec_issue': _chart_spec_issue,
@@ -133,6 +232,7 @@ def test_generated_chart_uses_returned_rows_and_visible_line_points():
         '_viz_client': SimpleNamespace(chat=SimpleNamespace(
             completions=SimpleNamespace(create=lambda **kwargs: response))),
         'json': json, 're': re,
+        **_currency_helpers,
     })
     chart, note = nodes['generate_chart_spec'](rows, 'Revenue in June')
     assert chart['data']['values'] == rows

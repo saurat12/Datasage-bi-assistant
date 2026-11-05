@@ -1,17 +1,45 @@
 import json
 import re
+from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest
 
 from evaluation import (
-    ANSWER_CHECKS, SQL_CHECKS, build_evidence, check_statements,
+    ANSWER_CHECKS, ANSWER_EVALUATOR_PROMPT, SQL_CHECKS, build_evidence, check_statements,
     failed_verdict, parse_statements, parse_verdict,
     apply_answer_applicability,
     sql_review_rules,
     invoke_evaluator,
+    numbers,
 )
 from test_database_gateway import _pipeline_functions
+
+
+def test_answer_review_accepts_supported_window_total_without_monthly_listing():
+    assert 'forecast.target_total_scope answer the total' in ANSWER_EVALUATOR_PROMPT
+    assert 'do not require the narrative' in ANSWER_EVALUATOR_PROMPT
+    assert 'never return\npassed=false or revision issues while every check remains true' in ANSWER_EVALUATOR_PROMPT
+    assert 'observational breakdown alone' in ANSWER_EVALUATOR_PROMPT
+
+
+def test_negative_currency_amount_retains_sign_in_evidence_check():
+    assert numbers('Revenue changed by -$76,361.09.') == {Decimal('-76361.09')}
+    assert numbers('Revenue changed by $-76,361.09.') == {Decimal('-76361.09')}
+    rows = [{'revenue_change': -76361.09}]
+    statements = [{'text': 'Revenue changed by -$76,361.09.',
+                   'fact_ids': ['rows[0].revenue_change']}]
+    assert check_statements(statements, build_evidence(rows)) == []
+
+
+def test_cited_negative_change_supports_explicit_decrease_magnitude_only():
+    evidence = build_evidence([{'revenue_change': -76361.09}])
+    def issues(text):
+        return check_statements([{'text': text,
+                                  'fact_ids': ['rows[0].revenue_change']}], evidence)
+    assert issues('Revenue had a decrease of $76,361.09.') == []
+    assert issues('Revenue increased by $76,361.09.')
+    assert issues('Revenue had a decrease of $90,000.00.')
 
 
 def approved(checks=ANSWER_CHECKS):
@@ -38,6 +66,7 @@ def test_sql_reviewer_receives_only_applicable_rules():
     forecast = sql_review_rules(True)
     assert 'WHERE date/year filters explicitly requested' in historical
     assert 'LIMIT is optional' in historical
+    assert 'trend within one named year' in historical
     assert 'FORECAST HISTORY EXTRACTION' not in historical
     assert 'without LIMIT or future/recent-date filters' in forecast
     assert 'HISTORICAL ANALYSIS' not in forecast
@@ -391,6 +420,7 @@ def test_summary_evidence_filters_fields_before_aggregation():
         'Dict': dict, 'Any': object, 'List': list,
         'settings': SimpleNamespace(summary_sample_rows=1, llm_column_allowlist={'revenue'}),
         'json': json, 'build_evidence': build_evidence, 'parse_statements': parse_statements,
+        '_attach_period_citations': lambda statements, evidence: statements,
         'SUMMARY_SYSTEM_PROMPT': '', 'STRUCTURED_SUMMARY_PROMPT': STRUCTURED_SUMMARY_PROMPT,
         'summary_llm': SimpleNamespace(invoke=lambda messages: (seen.append(messages) or SimpleNamespace(content=response))),
     })
@@ -465,6 +495,28 @@ def test_technical_retry_can_recover_without_summary_revision():
     assert final['evaluation']['passed']
     assert final['summary'] == current['summary']
     assert final.get('evaluation_retry_count', 0) == 0
+
+
+def test_exact_grounded_trend_fallback_passes_deterministic_evidence_review():
+    nodes = answer_nodes(approved())
+    current = {**state(), 'question': 'Revenue trend in 2017?',
+               'rows': [{'period': '2017-01', 'revenue': 10}],
+               'critic_approved': True, 'summary_source': 'grounded_fallback'}
+    nodes['_safe_rows_for_llm'] = lambda rows, limit: rows[:limit]
+    nodes['_trend_summary_statements'] = lambda question, rows, evidence: current['summary_statements']
+    nodes['critic_llm'] = SimpleNamespace(invoke=lambda messages: (_ for _ in ()).throw(
+        AssertionError('Exact grounded fallback should not call the LLM reviewer')))
+
+    result = nodes['answer_evaluation_node'](current)
+
+    assert result['evaluation']['passed']
+    assert result['evaluation']['source'] == 'deterministic_trend_evidence'
+    assert result['summary'] == current['summary']
+
+    altered = {**current, 'summary': 'Different text.'}
+    rejected = nodes['answer_evaluation_node'](altered)
+    assert not rejected['evaluation']['passed']
+    assert rejected['evaluation'].get('source') != 'deterministic_trend_evidence'
 
 
 def test_invalid_evaluator_diagnostic_is_bounded_and_single_attempt():

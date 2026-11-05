@@ -59,6 +59,9 @@ For monthly metrics in a specified year, a matching date range or year filter
 and monthly GROUP BY is valid. A monthly aggregation restricted to one year
 returns at most twelve groups, so LIMIT is optional. Other small aggregate
 results also do not require LIMIT. LIMIT 100 is permitted; optional does not mean forbidden.
+For a trend within one named year, require more than a single annual total:
+group by month unless the user requests another time interval. A trend needs
+time-separated observations to show change.
 Do not reject a query merely because it includes or omits an optional LIMIT.
 The gateway independently enforces row limits.
 Do not remove a requested year filter or replace it with unrelated conditions.
@@ -104,10 +107,18 @@ must be supported by the current request's evidence. Do not treat the prior
 answer as proof of a cause or as current database results.
 Check relevance, numerical meaning (metric, units, dates, groups), completeness, unsupported
 causal claims and forecast uncertainty. A matching number alone is not sufficient evidence.
+For a time-series trend, assess the set of statements together. Endpoint values,
+high/low observations, and selected period-to-period changes can describe a
+trend without every sentence restating the entire series. A cited increase
+between two periods does not claim the metric increased in every period.
+Check a superlative such as "largest rise" against all supplied periods;
+do not infer a superlative from a sentence that only states one measured change.
 For a revenue-change question, a comparison of the requested and prior periods,
 distinct order volume, revenue per order or unit, and available product/discount
 breakdowns is a measured explanation. Do not demand proof of customer motives.
 Product revenue changes are contributions, not proof of a causal mechanism.
+Do not approve language claiming a proven cause (such as "caused by", "due to",
+"driven by", or "attributed to") from an observational breakdown alone.
 For forecast requests, the executed SQL retrieves historical training data only.
 The forecasting engine applies the requested future window after fitting; SQL
 must not filter history to that future window. Judge target-period coverage
@@ -117,6 +128,11 @@ date filter. Reject an actual mismatch between the forecast dates and target.
 When the payload says historical SQL was approved separately, evaluate the
 forecast facts and cited answer; the absence of SQL text from this review is
 not evidence that the requested future period is missing.
+For a requested quarter or other target-window total, a cited forecast.target_total
+and forecast.target_total_scope answer the total; do not require the narrative
+to list every monthly point forecast unless the user asked for that breakdown.
+When a supplied warning and backtest MAPE, validation count and scope are
+explained in plain language, do not demand subjective reliability judgments.
 Sample rows cannot justify whole-result claims. Full-result numeric statistics describe
 returned rows, not necessarily business totals. A sum of rates is not a business total.
 Backtest error is historical, never guaranteed future accuracy. Require supplied warnings,
@@ -144,20 +160,37 @@ Return JSON only: {"passed": boolean, "checks": {"answers_question": boolean,
 All checks must pass to approve. Failed checks need concrete issues and fixes.
 Set passed to exactly the conjunction of the checks. If every check is true,
 return passed=true, issues=[], retry_target=null and fix_instructions="".
+If you identify a real defect, mark the relevant check false; never return
+passed=false or revision issues while every check remains true.
 '''
 
 STRUCTURED_SUMMARY_PROMPT = '''
 Return ONLY JSON: {"statements": [{"text": "a business-facing sentence",
 "fact_ids": ["exact evidence fact IDs supporting this sentence"]}]}.
+Write only business prose in text. Put evidence IDs exclusively in fact_ids;
+never include row IDs, evidence keys, or parenthetical citations in text.
 Use 1-20 statements. Cite facts for every factual statement. All digit-based numbers
 must occur in the cited facts' display values exactly (commas are optional).
+Display revenue and sales monetary amounts with a leading $; leave counts,
+quantities, rates, and percentages without a dollar sign.
 Years and dates are numbers too: cite both the period fact and metric fact for
-each yearly/monthly amount. For requested yearly or monthly breakdowns, write one
-statement per returned period (e.g. twelve statements for twelve months), citing
-that row's period AND amount. Skip introductory totals and extra trend commentary.
+each yearly/monthly amount in fact_ids. Only for an explicit request for each
+month, each year, or an equivalent period-by-period list, write one statement
+per returned period (e.g. twelve statements for twelve months), citing that
+row's period AND amount. A trend question instead needs a short explanation
+of direction and salient observed values, not a sentence for every row.
+Do not claim a cause or calculate a total, percentage, or ratio that is absent
+from the evidence.
 Answer the requested breakdown without adding an overall total unless requested.
 For example, a sentence about a year's revenue needs both rows[0].period and
 rows[0].revenue when those exact IDs exist. Use actual IDs from the evidence.
+For forecasts, cite forecast.horizon in every statement that names the target
+year or target window. Include a statement for each forecast.warnings[...] fact.
+If forecast.accuracy is present, cite and explain its metric, mape_percent,
+validation_points, validation_splits, and validation_scope together. These
+required facts must all appear in fact_ids, even when the prose is brief.
+State the validation scope in the prose, such as "single historical series"
+or "aggregated across groups" as provided by the evidence.
 Do not invent calculations or abbreviate numbers with K/M/million. Use supplied
 full-result statistics only with their stated scope; samples are not the full result.
 Facts are rounded to two decimal places. Do not turn sums of rates into business totals.
@@ -405,6 +438,9 @@ def parse_statements(raw):
 
 
 def numbers(text):
+    # Strip currency symbols before extracting numbers so -$76,361.09 keeps
+    # its sign. Otherwise a valid negative revenue change appears unsupported.
+    text = text.replace('-$', '-').replace('$-', '-').replace('$', '')
     return {Decimal(token.replace(',', '')) for token in re.findall(
         r'(?<![\w.])-?\d+(?:,\d{3})*(?:\.\d+)?', text)}
 
@@ -420,7 +456,15 @@ def check_statements(statements, evidence):
             issues.append(f'Statement {index + 1} has missing or unknown evidence references.')
             continue
         supported = set().union(*(numbers(facts[ref]['display'] + ' ' + facts[ref].get('context', '')) for ref in refs))
-        unsupported = numbers(statement['text']) - supported
+        # A cited -77 change also supports "a decrease of $77". The language
+        # must state the direction; a bare positive amount is not equivalent.
+        decline_described = re.search(
+            r'\b(?:decreas(?:e|ed|ing)|declin(?:e|ed|ing)|drop|dropped|'
+            r'fall|fell|lower|down)\b', statement['text'], re.IGNORECASE)
+        magnitudes = ({value for value in numbers(statement['text'])
+                       if value > 0 and -value in supported}
+                      if decline_described else set())
+        unsupported = numbers(statement['text']) - supported - magnitudes
         if unsupported:
             issues.append(f'Statement {index + 1} contains unsupported numbers: {sorted(map(str, unsupported))}.')
             candidates = [key for key, fact in facts.items() if numbers(fact['display']) & unsupported]

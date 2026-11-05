@@ -96,23 +96,15 @@ h1,h2,h3,p,label { color:var(--text); }
     border:1px solid #35577e; border-radius:16px; padding:1.1rem 1.2rem .8rem;
     margin-bottom:1rem; }
 .ds-answer-copy { line-height:1.65; margin:.35rem 0; }
-.ds-status { display:inline-block; padding:.3rem .7rem; border-radius:999px;
-    font-size:.78rem; font-weight:700; margin:.15rem 0 .7rem; }
-.ds-passed { background:#0d5d53; color:#85f7d4; }
-.ds-qualified { background:#5b4428; color:#ffdb99; }
-.ds-data-only { background:#244b68; color:#b9e1ff; }
-.ds-blocked { background:#663441; color:#ffd0d6; }
-.ds-idle { background:#26395b; color:#c5d6f2; }
 .ds-empty { padding:1.3rem .3rem 1.8rem; min-height:145px; }
 .ds-empty h2 { font-size:1.45rem; margin:0 0 .4rem; }
 .ds-empty p { color:var(--muted); margin:0; line-height:1.55; }
-[data-testid="stForm"] { background:linear-gradient(105deg,#203c55,#252b57);
+[data-testid="stChatInput"] { background:linear-gradient(105deg,#203c55,#252b57);
     border:1px solid #3c8aab!important; border-radius:15px; padding:.4rem .75rem!important;
     box-shadow:inset 0 1px 0 #78cad331; }
-[data-testid="stForm"] [data-baseweb="input"] { background:transparent; border:0; }
-[data-testid="stForm"] input { background:transparent; color:var(--text);
+[data-testid="stChatInput"] textarea { background:transparent; color:var(--text);
     font-size:1rem; border:0; }
-[data-testid="stFormSubmitButton"] button { border:0; border-radius:11px;
+[data-testid="stChatInputSubmitButton"] button { border:0; border-radius:11px;
     color:#081b2a; font-weight:800; background:linear-gradient(135deg,#79e7f1,#44d9cc); }
 .ds-chart-head { display:flex; justify-content:space-between; align-items:flex-start;
     gap:1rem; margin:.1rem 0 .6rem; }
@@ -172,24 +164,6 @@ def render_metrics(metrics: dict | None) -> None:
         st.caption("Estimates cover reported API usage only. Unreported SDK retries and infrastructure costs are excluded.")
 
 
-def _review_copy(status: str | None) -> tuple[str, str, str, str]:
-    if status == "passed":
-        return "Review passed", "Automated answer checks passed. Dataset freshness and completeness were not assessed.", "✓", "passed"
-    if status == "qualified":
-        return "Review unavailable", "This answer has not been independently verified.", "!", "qualified"
-    if status == "data_only":
-        return "Interpretation unverified", "Inspect the returned values; the written analysis did not pass review.", "i", "data-only"
-    if status == "blocked":
-        return "Request not verified", "No approved answer was produced for this request.", "!", "blocked"
-    return "Waiting for analysis", "Review status will appear after your first question.", "✓", "idle"
-
-
-def render_status(status: str | None) -> None:
-    title, _, _, css = _review_copy(status)
-    st.markdown('<div class="ds-status ds-' + css + '">' + html.escape(title) + '</div>',
-                unsafe_allow_html=True)
-
-
 def build_followup_context(message: dict | None) -> dict | None:
     """Carry only the latest verified insight into the next question."""
     if (not message or message.get("evaluation_status") != "passed"
@@ -214,7 +188,6 @@ def render_conversation(answers: list[dict]) -> None:
                             unsafe_allow_html=True)
                 if message.get("interpreted_question"):
                     st.caption("Interpreted as: " + message["interpreted_question"])
-                render_status(message.get("evaluation_status"))
                 answer = html.escape(message.get("content") or "No interpretation available.")
                 st.markdown('<div class="ds-answer-box"><div class="ds-insight-bar">'
                             '<span class="ds-glow-icon">✦</span>DataSage insight</div>'
@@ -228,49 +201,44 @@ def render_conversation(answers: list[dict]) -> None:
         else:
             st.markdown('<div class="ds-empty"><h2>Ask a question about your data</h2>'
                         '<p>Explore trends, comparisons, and forecasts. Your latest '
-                        'answer will appear here with its review status.</p></div>',
+                        'answer will appear here.</p></div>',
                         unsafe_allow_html=True)
-        available_context = build_followup_context(answers[-1] if answers else None)
-        with st.form("ask_form", clear_on_submit=True):
-            prompt_column, submit_column = st.columns([8, 1], vertical_alignment="bottom")
-            with prompt_column:
-                question = st.text_input("Business question", label_visibility="collapsed",
-                                         placeholder="Ask a follow-up question...")
-            with submit_column:
-                submitted = st.form_submit_button("Ask ↗", width="stretch")
-            follow_up = (st.checkbox("Follow up on previous insight", value=True,
-                                     key=f"followup_{len(st.session_state.messages)}")
-                         if available_context else False)
-    if submitted and question.strip():
-        question = question.strip()
-        context = available_context if follow_up else None
-        st.session_state.messages.append({"role": "user", "content": question})
-        try:
-            with st.spinner("Analyzing your data..."):
-                result = ask_bi_agent(question, context=context)
-        except Exception:
-            logger.exception("DataSage request failed")
-            result = {"summary": "The assistant is temporarily unavailable. Please try again shortly.",
-                      "evaluation": {"status": "blocked"}}
-        forecast = result.get("forecast") or {}
-        st.session_state.messages.append({
-            "role": "assistant", "question": question,
-            "content": result.get("summary") or "No answer was available.",
-            "metrics": result.get("metrics"),
-            "sql": None if follow_up else result.get("sql"),
-            "chart_spec": None if follow_up else result.get("chart_spec"),
-            "chart_note": None if follow_up else result.get("chart_note"),
-            "rows": result.get("rows"),
-            "evaluation_status": result.get("evaluation", {}).get("status"),
-            "forecast_used": result.get("forecast_used", False),
-            "forecast_requested": result.get("forecast_requested", result.get("forecast_used", False)),
-            "forecast_chart": None if follow_up else forecast.get("chart_spec"),
-            "forecast_rows": forecast.get("rows"), "forecast_meta": forecast.get("meta"),
-            "context_version": result.get("context_version"),
-            "interpreted_question": result.get("interpreted_question"),
-            "followup_requested": follow_up or result.get("followup_requested", False),
-        })
-        st.rerun()
+
+
+def render_question_input(answers: list[dict]) -> None:
+    question = st.chat_input("Ask a question...")
+    if not question or not question.strip():
+        return
+    question = question.strip()
+    available_context = build_followup_context(answers[-1] if answers else None)
+    st.session_state.messages.append({"role": "user", "content": question})
+    try:
+        with st.spinner("Analyzing your data..."):
+            result = ask_bi_agent(question, context=available_context)
+    except Exception:
+        logger.exception("DataSage request failed")
+        result = {"summary": "The assistant is temporarily unavailable. Please try again shortly.",
+                  "evaluation": {"status": "blocked"}}
+    follow_up = result.get("followup_requested", False)
+    forecast = result.get("forecast") or {}
+    st.session_state.messages.append({
+        "role": "assistant", "question": question,
+        "content": result.get("summary") or "No answer was available.",
+        "metrics": result.get("metrics"),
+        "sql": None if follow_up else result.get("sql"),
+        "chart_spec": None if follow_up else result.get("chart_spec"),
+        "chart_note": None if follow_up else result.get("chart_note"),
+        "rows": result.get("rows"),
+        "evaluation_status": result.get("evaluation", {}).get("status"),
+        "forecast_used": result.get("forecast_used", False),
+        "forecast_requested": result.get("forecast_requested", result.get("forecast_used", False)),
+        "forecast_chart": None if follow_up else forecast.get("chart_spec"),
+        "forecast_rows": forecast.get("rows"), "forecast_meta": forecast.get("meta"),
+        "context_version": result.get("context_version"),
+        "interpreted_question": result.get("interpreted_question"),
+        "followup_requested": follow_up,
+    })
+    st.rerun()
 
 
 def render_chart_panel(message: dict | None) -> None:
@@ -294,6 +262,8 @@ def render_chart_panel(message: dict | None) -> None:
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
+if st.session_state.get("navigation") == "Insights":
+    st.session_state.navigation = "Ask DataSage"
 
 with st.sidebar:
     st.markdown('''<div class="ds-brand"><svg viewBox="0 0 56 52" aria-hidden="true">
@@ -302,10 +272,10 @@ with st.sidebar:
       <path d="M3 42c13-1 17-25 30-29 12-4 18 8 20 21-11-10-18-10-24-3C18 44 12 47 3 42Z"
       fill="url(#ds-logo)"/><path d="M24 42c11-22 17-34 26-34 4 0 6 3 5 8-6-5-11 6-17 17-4 8-8 12-14 9Z"
       fill="#66e6e2" opacity=".78"/></svg>DataSage</div>''', unsafe_allow_html=True)
-    navigation = st.radio("Navigation", ["Ask DataSage", "Insights", "Data", "SQL", "Settings"],
+    navigation = st.radio("Navigation", ["Ask DataSage", "Data", "SQL", "Settings"],
                           label_visibility="collapsed", key="navigation")
     st.markdown('<div class="ds-sidebar-foot">Ask questions in plain language.<br>'
-                'Answers include their review status.</div>', unsafe_allow_html=True)
+                'Answers are checked against the available data.</div>', unsafe_allow_html=True)
 
 answers = [item for item in st.session_state.messages if item.get("role") == "assistant"]
 latest = answers[-1] if answers else None
@@ -317,18 +287,11 @@ if navigation == "Ask DataSage":
     render_chart_panel(latest)
     if latest:
         render_metrics(latest.get("metrics"))
-elif navigation == "Insights":
-    if not answers:
-        st.info("Ask a question to build your insight history.")
-    for item in reversed(answers):
-        with st.expander(item.get("question") or "Previous question"):
-            render_status(item.get("evaluation_status"))
-            st.markdown(item.get("content") or "No answer was available.")
+    render_question_input(answers)
 elif navigation == "Data":
     if not latest:
         st.info("Run an analysis to inspect its returned values.")
     else:
-        render_status(latest.get("evaluation_status"))
         values = (latest.get("forecast_rows") if latest.get("forecast_requested")
                   else latest.get("rows")) or []
         if values:

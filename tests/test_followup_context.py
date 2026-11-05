@@ -62,7 +62,7 @@ def test_ask_view_renders_every_answer_in_session_order():
     namespace = {
         'st': st, 'html': html,
         'render_status': lambda status: None,
-        'build_followup_context': lambda message: None,
+        'build_followup_context': lambda message: {'question': 'prior', 'summary': 'prior'},
     }
     exec(compile(ast.Module(body=[function], type_ignores=[]), str(app_path), 'exec'), namespace)
     render = namespace['render_conversation']
@@ -73,6 +73,72 @@ def test_ask_view_renders_every_answer_in_session_order():
     assert output.index('First answer') < output.index('Second question?')
     assert output.index('Second question?') < output.index('Second answer')
     assert shown.count('DIVIDER') == 1
+
+
+def test_question_input_uses_bottom_chat_widget_after_results():
+    app_path = Path(__file__).resolve().parents[1] / 'app.py'
+    tree = ast.parse(app_path.read_text(encoding='utf-8'))
+    function = next(node for node in tree.body
+                    if isinstance(node, ast.FunctionDef)
+                    and node.name == 'render_question_input')
+    placeholders = []
+    namespace = {'st': SimpleNamespace(chat_input=lambda prompt: (
+        placeholders.append(prompt) or None))}
+    exec(compile(ast.Module(body=[function], type_ignores=[]), str(app_path), 'exec'), namespace)
+    namespace['render_question_input']([])
+    assert placeholders == ['Ask a question...']
+
+    ask_view = next(node for node in tree.body
+                    if isinstance(node, ast.If)
+                    and isinstance(node.test, ast.Compare)
+                    and isinstance(node.test.left, ast.Name)
+                    and node.test.left.id == 'navigation')
+    direct_calls = [node.value.func.id for node in ask_view.body
+                    if isinstance(node, ast.Expr)
+                    and isinstance(node.value, ast.Call)
+                    and isinstance(node.value.func, ast.Name)]
+    assert direct_calls == ['render_conversation', 'render_chart_panel',
+                            'render_question_input']
+
+
+def test_followup_keeps_prior_questions_and_answers_without_review_badges():
+    shown = []
+    st = SimpleNamespace(
+        container=lambda **kwargs: nullcontext(),
+        form=lambda *args, **kwargs: nullcontext(),
+        columns=lambda *args, **kwargs: [nullcontext(), nullcontext()],
+        markdown=lambda value, **kwargs: shown.append(value),
+        divider=lambda: None,
+        text_input=lambda *args, **kwargs: '',
+        form_submit_button=lambda *args, **kwargs: False,
+        caption=lambda *args: None,
+    )
+    app_path = Path(__file__).resolve().parents[1] / 'app.py'
+    tree = ast.parse(app_path.read_text(encoding='utf-8'))
+    function = next(node for node in tree.body
+                    if isinstance(node, ast.FunctionDef)
+                    and node.name == 'render_conversation')
+    namespace = {
+        'st': st, 'html': html,
+        'render_status': lambda status: None,
+        'build_followup_context': lambda message: None,
+    }
+    exec(compile(ast.Module(body=[function], type_ignores=[]), str(app_path), 'exec'), namespace)
+    namespace['render_conversation']([
+        {'question': 'Revenue in January?', 'content': 'January answer',
+         'evaluation_status': 'passed'},
+        {'question': 'Why did it fall?', 'content': 'Follow-up answer',
+         'followup_requested': True, 'evaluation_status': 'data_only'},
+    ])
+    output = '\n'.join(shown)
+    assert 'Revenue in January?' in output
+    assert 'Why did it fall?' in output
+    assert 'January answer' in output
+    assert 'Follow-up answer' in output
+    assert 'Review passed' not in output
+    assert 'Review unavailable' not in output
+    assert 'Interpretation unverified' not in output
+    assert 'Automated verification was unavailable' not in output
 
 
 def test_context_accepts_only_verified_current_database_insight():
