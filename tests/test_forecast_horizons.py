@@ -61,6 +61,16 @@ def test_absolute_year_still_clips_correctly():
     assert list(result.forecast.date) == [pd.Timestamp('2024-01-01')]
 
 
+def test_q1_forecast_returns_only_target_months():
+    target = forecasting.extract_target_window('What will be the revenue in Q1 of 2018?')
+    historical = pd.DataFrame({
+        'period': pd.date_range('2014-01-01', periods=48, freq='MS'),
+        'revenue': np.arange(48) + 100.0,
+    })
+    result = forecasting.forecast_series(historical, target_window=target)
+    assert list(result.forecast.date) == list(pd.date_range('2018-01-01', periods=3, freq='MS'))
+
+
 def test_grouped_horizons_convert_for_every_group():
     df = pd.concat([history().assign(region='East'), history().assign(region='West')])
     result = forecasting.forecast_series(df, periods=2, horizon_unit='years', group_col='region')

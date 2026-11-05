@@ -1,6 +1,6 @@
 import pytest
 
-from evaluation import build_evidence, check_statements, executed_order_year
+from evaluation import build_evidence, check_statements, executed_order_filters, executed_order_year
 
 
 SQL = """SELECT region, SUM(total_sales) AS total_sales
@@ -38,6 +38,44 @@ def test_unproven_year_context_is_not_added(sql):
 def test_missing_sql_does_not_assume_year_from_question():
     evidence = build_evidence([{'region': 'West', 'total_sales': 123.45}])
     assert check_statements([{'text': 'Sales in 2017 were 123.45.', 'fact_ids': ['rows[0].total_sales']}], evidence)
+
+
+def test_executed_month_filter_supports_year_in_a_grouped_answer():
+    sql = ("SELECT product_name, SUM(total_sales) AS total_sales FROM orders "
+           "WHERE strftime('%Y-%m', order_date) = '2016-06' "
+           "GROUP BY product_name ORDER BY total_sales DESC LIMIT 100")
+    evidence = build_evidence([{'product_name': 'Desk', 'total_sales': 123.45}],
+                              executed_sql=sql)
+    assert evidence['facts']['query.order_month']['value'] == '2016-06'
+    refs = ['rows[0].product_name', 'rows[0].total_sales']
+    assert not check_statements([{'text': 'Desk sales in June 2016 were 123.45.',
+                                  'fact_ids': refs}], evidence)
+    assert check_statements([{'text': 'Desk sales in June 2017 were 123.45.',
+                              'fact_ids': refs}], evidence)
+
+
+def test_exact_month_range_proves_the_same_scope():
+    sql = ("SELECT region, product_name, SUM(total_sales) AS total_sales "
+           "FROM orders WHERE order_date >= '2015-06-01' "
+           "AND order_date < '2015-07-01' "
+           "GROUP BY region, product_name ORDER BY total_sales DESC LIMIT 100")
+    evidence = build_evidence([{'region': 'East', 'product_name': 'Desk',
+                                'total_sales': 123.45}], executed_sql=sql)
+    assert evidence['facts']['query.order_month']['value'] == '2015-06'
+    refs = ['rows[0].region', 'rows[0].product_name', 'rows[0].total_sales']
+    assert not check_statements([{'text': 'East Desk sales in June 2015 were 123.45.',
+                                  'fact_ids': refs}], evidence)
+    assert executed_order_filters(sql.replace("'2015-07-01'", "'2015-08-01'")) is None
+
+
+@pytest.mark.parametrize('unsafe_sql', [
+    "SELECT product_name, SUM(total_sales) FROM orders WHERE "
+    "strftime('%Y-%m', order_date) = '2016-06' OR region = 'West' GROUP BY product_name",
+    "SELECT product_name FROM orders WHERE strftime('%Y-%m', order_date) != '2016-06'",
+    "SELECT product_name FROM orders WHERE strftime('%Y-%m', order_date) = '2016-13'",
+])
+def test_unproven_month_context_is_not_added(unsafe_sql):
+    assert executed_order_filters(unsafe_sql) is None
 
 @pytest.mark.parametrize('where', [
     "strftime('%Y', order_date) = '2017' AND region = 'East'",

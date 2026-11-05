@@ -1,8 +1,29 @@
 from types import SimpleNamespace
+import re
 
 import pandas as pd
 
 from test_database_gateway import _pipeline_functions
+from telemetry import measure_request
+
+
+def test_forecast_chart_formats_revenue_without_changing_values():
+    build = _pipeline_functions({'_build_forecast_chart_spec'}, {
+        'pd': pd, 'ForecastResult': object,
+    })['_build_forecast_chart_spec']
+    result = SimpleNamespace(
+        history=pd.DataFrame({'date': [pd.Timestamp('2017-12-01')],
+                              'value': [100.0]}),
+        forecast=pd.DataFrame({'date': [pd.Timestamp('2018-01-01')],
+                               'value': [120.0], 'lower': [110.0], 'upper': [130.0]}),
+    )
+    chart = build(result, currency=True)
+    assert all(layer['encoding']['y']['axis']['format'] == '$,.2f'
+               for layer in chart['layer'])
+    assert chart['layer'][0]['encoding']['tooltip'][1]['format'] == '$,.2f'
+    assert chart['layer'][0]['data']['values'][0]['value'] == 120.0
+    count_chart = build(result)
+    assert 'axis' not in count_chart['layer'][0]['encoding']['y']
 
 
 def _forecast_result():
@@ -13,14 +34,15 @@ def _forecast_result():
     )
 
 
-def _forecast_nodes(forecast_series, interpret=lambda question: {'mode': 'default'}):
+def _forecast_nodes(forecast_series, interpret=lambda question: {'mode': 'default'}, target=None):
     return _pipeline_functions({'forecast_agent_node', 'route_after_forecast'}, {
-        'pd': pd,
-        'extract_target_window': lambda question: None,
+        'pd': pd, 're': re,
+        'extract_target_window': lambda question: target,
         'extract_horizon': lambda question, default: (3, 'months'),
         'forecast_series': forecast_series,
         '_llm_interpret_horizon': interpret,
-        '_build_forecast_chart_spec': lambda result: {'mark': 'line'},
+        '_build_forecast_chart_spec': lambda result, *, currency=False: {'mark': 'line'},
+        '_is_currency_metric': lambda field: field in {'revenue', 'total_sales'},
         'MAX_FORECAST_RETRIES': 1,
     })
 
@@ -41,6 +63,60 @@ def test_forecast_success_routes_to_accuracy():
     assert result['forecast_result'].meta['warnings'] == ['Model limitation.']
     assert calls[0]['periods'] == 3
     assert nodes['route_after_forecast'](result) == 'accuracy'
+
+
+def test_forecast_followup_keeps_result_without_building_chart():
+    nodes = _forecast_nodes(lambda df, **kwargs: _forecast_result())
+    result = nodes['forecast_agent_node']({
+        'forecast': True, 'question': 'Forecast revenue',
+        'conversation_context': {'question': 'Previous insight'},
+        'context_used': True,
+        'rows': [{'period': '2017-01', 'revenue': 10.0}],
+    })
+    assert result['forecast_result'] is not None
+    assert result['forecast_chart_spec'] is None
+
+
+def test_absolute_additive_forecast_records_target_total():
+    expected = SimpleNamespace(
+        method='test model',
+        forecast=pd.DataFrame({'value': [10.0, 20.0, 30.0],
+                               'lower': [9.0, 19.0, 29.0]}),
+        meta={'target_window': 'Q1 2018'},
+    )
+    nodes = _forecast_nodes(lambda df, **kwargs: expected,
+                            target=('2018-01-01', '2018-03-31', 'Q1 2018'))
+    state = nodes['forecast_agent_node']({
+        'forecast': True, 'question': 'What will be the revenue in Q1 of 2018?',
+        'sql': 'SELECT period, SUM(total_sales) FROM orders GROUP BY period',
+        'rows': [{'period': '2017-12-01', 'total_sales': 100.0}],
+    })
+    assert state['forecast_result'].meta['target_total'] == 60.0
+    assert state['forecast_error'] is None
+
+
+def test_forecast_and_backtest_record_separate_local_spans():
+    result = _forecast_result()
+    nodes = _forecast_nodes(lambda df, **kwargs: result)
+    nodes.update(_pipeline_functions({'accuracy_agent_node'}, {
+        'pd': pd,
+        'quick_accuracy': lambda df, horizon: SimpleNamespace(
+            mape=5.0, n_splits=1, n_points=3),
+    }))
+
+    @measure_request
+    def request():
+        state = nodes['forecast_agent_node']({
+            'forecast': True, 'question': 'Forecast revenue',
+            'rows': [{'period': '2017-01', 'revenue': 10.0}],
+        })
+        nodes['accuracy_agent_node'](state)
+        return {}
+
+    stages = request()['metrics']['stages']
+    assert [entry['stage'] for entry in stages] == [
+        'forecast_fit', 'forecast_backtest']
+    assert stages[0]['end_seconds'] <= stages[1]['start_seconds']
 
 
 def test_empty_history_skips_forecast_retry():

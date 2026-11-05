@@ -38,8 +38,44 @@ def test_chart_runs_while_summary_work_continues_and_is_counted():
     assert chart_call['input_tokens'] == 100
     assert chart_call['output_tokens'] == 20
     assert chart_call['estimated_cost_usd'] > 0
+    assert chart_call['concurrent'] is True
     assert metrics['model_calls'] == 2
     assert metrics['estimated_cost_usd'] > chart_call['estimated_cost_usd']
+
+
+def test_timeline_shows_chart_and_summary_overlap():
+    chart_started = threading.Event()
+    summary_started = threading.Event()
+
+    def generate(rows, question):
+        def chart_call():
+            chart_started.set()
+            assert summary_started.wait(2)
+            return SimpleNamespace(model='gpt-4o-mini', usage=SimpleNamespace(
+                prompt_tokens=1, completion_tokens=1))
+        tracked_call('chart', 'gpt-4o-mini', chart_call)
+        return {'data': rows}, None
+
+    def request():
+        with chart_request():
+            rows = [{'value': 1}]
+            schedule_chart('SELECT value', rows, 'value', generate)
+            def summary_call():
+                summary_started.set()
+                assert chart_started.wait(2)
+                return SimpleNamespace(usage_metadata={
+                    'input_tokens': 1, 'output_tokens': 1})
+            tracked_call('summary', 'gpt-4o-mini', summary_call)
+            chart_result('SELECT value', rows)
+        return {}
+
+    stages = measure_request(request)()['metrics']['stages']
+    chart = next(stage for stage in stages if stage['stage'] == 'chart')
+    summary = next(stage for stage in stages if stage['stage'] == 'summary')
+    assert chart['start_seconds'] <= summary['end_seconds']
+    assert summary['start_seconds'] <= chart['end_seconds']
+    assert chart['concurrent'] is True
+    assert summary['concurrent'] is False
 
 
 def test_sql_revision_discards_old_chart_and_uses_new_rows():
@@ -79,7 +115,31 @@ def test_executor_starts_only_approved_historical_charts():
     assert scheduled[0][:3] == (base['sql'], approved['rows'], base['question'])
     nodes['executor_node']({**base, 'critic_approved': True, 'forecast': True})
     nodes['executor_node']({**base, 'critic_approved': False, 'review_fallback': True})
+    nodes['executor_node']({**base, 'critic_approved': True,
+                            'conversation_context': {'question': 'Previous insight'},
+                            'context_used': True})
     assert len(scheduled) == 1
+
+
+def test_executor_records_database_timing():
+    nodes = _pipeline_functions({'executor_node'}, {
+        '_sanitize_single_statement': lambda sql: sql,
+        '_run_sql': lambda sql, forecast: [{'value': 1}],
+        'schedule_chart': lambda *args: None,
+        'generate_chart_spec': lambda rows, question: (None, None),
+    })
+
+    @measure_request
+    def request():
+        result = nodes['executor_node']({
+            'sql': 'SELECT value', 'question': 'value', 'critic_approved': True,
+        })
+        assert result['rows'] == [{'value': 1}]
+        return {}
+
+    stages = request()['metrics']['stages']
+    assert [entry['stage'] for entry in stages] == ['database']
+    assert stages[0]['failed'] is False
 
 
 def test_chart_start_failure_does_not_invalidate_executed_rows():
@@ -103,6 +163,7 @@ def test_viz_node_uses_prepared_chart_and_never_returns_stale_one():
     generated = []
     nodes = _pipeline_functions({'viz_node'}, {
         'chart_result': chart_result,
+        '_format_currency_chart': lambda spec: spec,
         'generate_chart_spec': lambda rows, question: (
             generated.append(rows) or {'mark': 'bar', 'data': rows}, None),
     })
@@ -117,6 +178,12 @@ def test_viz_node_uses_prepared_chart_and_never_returns_stale_one():
         assert nodes['viz_node'](changed)['chart_spec']['data'] == changed['rows']
         assert generated == [changed['rows']]
         assert nodes['viz_node']({**state, 'forecast': True})['chart_spec'] is None
+    assert nodes['viz_node']({**state, 'conversation_context':
+                              {'question': 'Previous insight'},
+                              'context_used': True})['chart_spec'] is None
+    assert nodes['viz_node']({**state, 'conversation_context':
+                              {'question': 'Previous insight'},
+                              'context_used': False})['chart_spec'] is not None
 
 
 def test_graph_sql_retry_returns_chart_for_revised_rows_only():
@@ -172,6 +239,7 @@ def test_graph_sql_retry_returns_chart_for_revised_rows_only():
         'summary_node': summary,
         'answer_evaluation_node': evaluate,
         'chart_result': chart_result,
+        '_format_currency_chart': lambda spec: spec,
     })
     graph = nodes['_build_graph']()
     with chart_request():

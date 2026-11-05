@@ -31,6 +31,87 @@ def test_metric_contract_generalizes_to_unseen_billing_schema():
     assert metric_sql_issue('mrr', "SELECT COUNT(*) FROM subscriptions WHERE note='SUM(mrr)'")
 
 
+def test_metric_contract_allows_detail_projection_but_not_substituted_column():
+    assert metric_sql_issue(
+        'total_sales',
+        "SELECT order_id, order_date, total_sales FROM orders "
+        "WHERE region = 'West' ORDER BY order_date DESC LIMIT 5",
+    ) is None
+    assert metric_sql_issue(
+        'total_sales',
+        'SELECT order_id, order_date FROM orders ORDER BY order_date DESC LIMIT 5',
+    )
+    assert metric_sql_issue(
+        'total_sales',
+        'SELECT COUNT(DISTINCT order_id) FROM orders',
+    )
+
+
+def test_sql_critic_accepts_detail_projection_and_rejects_missing_metric():
+    from test_database_gateway import _pipeline_functions
+    from evaluation import SQL_CHECKS, SQL_EVALUATOR_PROMPT, failed_verdict, sql_review_rules
+    from sql_safety import split_statements
+
+    def approved(*args, **kwargs):
+        return dict(passed=True, checks={key: True for key in SQL_CHECKS},
+                    issues=[], retry_target=None, fix_instructions='',
+                    requested_metric_column='total_sales')
+
+    nodes = _pipeline_functions({'critic_node'}, {
+        'metric_sql_issue': metric_sql_issue, 'SQL_EVALUATOR_PROMPT': SQL_EVALUATOR_PROMPT,
+        'sql_review_rules': sql_review_rules, 'SQL_CHECKS': SQL_CHECKS,
+        'failed_verdict': failed_verdict, '_split_statements': split_statements,
+        're': re, 'json': json, 'APPROVED_SCHEMA': json.dumps(SCHEMA),
+        'invoke_evaluator': approved, 'critic_llm': object(),
+    })
+    valid = nodes['critic_node']({
+        'question': 'Show order ID, date and sales for the latest five orders',
+        'sql': 'SELECT order_id, order_date, total_sales FROM orders '
+               'ORDER BY order_date DESC LIMIT 5', 'forecast': False,
+    })
+    assert valid['critic_approved'] is True
+    invalid = nodes['critic_node']({
+        'question': 'Show order ID, date and sales for the latest five orders',
+        'sql': 'SELECT order_id, order_date FROM orders ORDER BY order_date DESC LIMIT 5',
+        'forecast': False,
+    })
+    assert invalid['critic_approved'] is False
+    assert 'total_sales' in invalid['critic_reason']
+
+
+def test_forecast_sql_critic_uses_separate_model_without_changing_historical_review():
+    from test_database_gateway import _pipeline_functions
+    from evaluation import SQL_CHECKS, SQL_EVALUATOR_PROMPT, failed_verdict, sql_review_rules
+    from sql_safety import split_statements
+
+    historical_model, forecast_model = object(), object()
+    seen = []
+
+    def reviewed(model, *args, **kwargs):
+        seen.append(model)
+        return dict(passed=True, checks={key: True for key in SQL_CHECKS},
+                    issues=[], retry_target=None, fix_instructions='',
+                    requested_metric_column='total_sales')
+
+    nodes = _pipeline_functions({'critic_node'}, {
+        'metric_sql_issue': metric_sql_issue, 'SQL_EVALUATOR_PROMPT': SQL_EVALUATOR_PROMPT,
+        'sql_review_rules': sql_review_rules, 'SQL_CHECKS': SQL_CHECKS,
+        'failed_verdict': failed_verdict, '_split_statements': split_statements,
+        '_looks_like_future_filter': lambda sql: False,
+        're': re, 'json': json, 'APPROVED_SCHEMA': json.dumps(SCHEMA),
+        'invoke_evaluator': reviewed, 'critic_llm': historical_model,
+        'forecast_sql_critic_llm': forecast_model,
+    })
+    sql = 'SELECT SUM(total_sales) FROM orders'
+    assert nodes['critic_node']({'question': 'Total sales', 'sql': sql,
+                                 'forecast': False})['critic_approved']
+    forecast_sql = ("SELECT strftime('%Y-%m-01', order_date) AS period, "
+                    'SUM(total_sales) FROM orders GROUP BY period ORDER BY period')
+    assert nodes['critic_node']({'question': 'Forecast sales', 'sql': forecast_sql,
+                                 'forecast': True})['critic_approved']
+    assert seen == [historical_model, forecast_model]
+
+
 def test_metric_contract_checks_only_simple_passthrough_ctes():
     assert metric_sql_issue(
         'total_sales',
@@ -170,6 +251,23 @@ def test_forecast_target_is_not_a_historical_filter():
 
 
 @pytest.mark.parametrize('question', [
+    'What will be the revenue in Q1 of 2018?',
+    'Forecast revenue for the first quarter of 2018',
+    'Predict sales for 2018 Q1',
+])
+def test_single_quarter_forecast_uses_full_history(question):
+    assert detect_forecast_intent(question)
+    assert extract_target_window(question)[2] == 'Q1 2018'
+    sql = forecast_history_sql(question, SCHEMA)
+    assert 'SUM(total_sales)' in sql
+    assert '2018' not in sql and 'WHERE' not in sql and 'LIMIT' not in sql
+
+
+def test_multiple_quarter_targets_do_not_use_single_target_template():
+    assert forecast_history_sql('Forecast revenue Q1 2018 Q1 2019', SCHEMA) is None
+
+
+@pytest.mark.parametrize('question', [
     'Forecast orders for West in 2018',
     'Forecast orders using history since 2015',
     'Forecast sales by region next year',
@@ -196,3 +294,29 @@ def test_statistical_fallback_is_limited_to_verified_history_plans():
     assert 'not actual' in summary
     state['sql_plan_verified'] = False
     assert 'statistical forecast' not in nodes['data_only_summary'](state)
+
+
+def test_approved_forecast_fallback_reports_target_total_without_claiming_verification():
+    from types import SimpleNamespace
+    from test_database_gateway import _pipeline_functions
+
+    summary = _pipeline_functions({'data_only_summary'}, {
+        'AccuracyMetrics': type('Metrics', (), {}),
+        '_currency_display': lambda field, value: value,
+    })['data_only_summary']({
+        'forecast_result': SimpleNamespace(meta={
+            'target_window': 'Q1 2018', 'target_total': 60.0, 'warnings': [],
+        }),
+        'sql_plan_verified': True,
+    })
+    assert 'Q1 2018: 60.00' in summary
+    assert 'estimate' in summary and 'could not be verified' in summary
+
+
+def test_unverified_forecast_fallback_does_not_offer_sql_for_inspection():
+    from test_database_gateway import _pipeline_functions
+
+    summary = _pipeline_functions({'data_only_summary'}, {
+        'AccuracyMetrics': type('Metrics', (), {}),
+    })['data_only_summary']({'forecast': True, 'rows': []})
+    assert 'SQL' not in summary and 'no projection is shown' in summary

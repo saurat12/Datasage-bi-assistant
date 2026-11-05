@@ -21,6 +21,7 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("DB_FILE", "DATASAGE_DB_FILE")
     )
     openai_model: str = Field(default="gpt-4o-mini", alias="OPENAI_MODEL")
+    forecast_sql_critic_model: str = Field(default="gpt-4o", alias="FORECAST_SQL_CRITIC_MODEL")
     request_timeout_seconds: float = Field(default=30, alias="REQUEST_TIMEOUT_SECONDS")
     openai_max_retries: int = Field(default=3, alias="OPENAI_MAX_RETRIES")
     sql_row_limit: int = Field(default=100, ge=1, alias="SQL_ROW_LIMIT")

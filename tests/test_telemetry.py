@@ -1,6 +1,7 @@
 from types import SimpleNamespace as NS
 import pytest
-from telemetry import measure_request, tracked_call, mark_cache_hit, price
+from telemetry import (TrackedModel, measure_request, tracked_call,
+                       tracked_stage, stage_label, mark_cache_hit, price)
 
 
 def test_usage_includes_repeated_calls_and_chart():
@@ -47,6 +48,9 @@ def test_price_override(monkeypatch):
     assert price('custom', 1000, 200, 100) == pytest.approx(.0011)
     monkeypatch.setenv('MODEL_PRICES_JSON', 'invalid')
     assert price('custom', 1000, 0, 100) is None
+    monkeypatch.delenv('MODEL_PRICES_JSON')
+    assert price('gpt-4o', 1000, 0, 100) == pytest.approx(.0035)
+    assert price('gpt-4o-2024-08-06', 1000, 0, 100) == pytest.approx(.0035)
 
 
 @pytest.mark.parametrize('tracked', [False, True])
@@ -68,3 +72,46 @@ def test_chart_model_keyword_is_forwarded_without_conflicting(tracked):
         assert result['metrics']['estimated_cost_usd'] is not None
     else:
         request()
+
+
+def test_timeline_records_distinct_review_roles_and_local_stages():
+    model = TrackedModel(NS(invoke=lambda messages: NS(usage_metadata={
+        'input_tokens': 1, 'output_tokens': 1})), 'critic', 'gpt-4o-mini')
+
+    @measure_request
+    def request():
+        with stage_label('sql_critic'):
+            model.invoke([])
+        with tracked_stage('database'):
+            pass
+        with stage_label('answer_critic'):
+            model.invoke([])
+        return {}
+
+    metrics = request()['metrics']
+    assert [entry['stage'] for entry in metrics['stages']] == [
+        'sql_critic', 'database', 'answer_critic']
+    assert [entry['stage'] for entry in metrics['calls']] == [
+        'sql_critic', 'answer_critic']
+    assert metrics['model_calls'] == 2
+    for entry in metrics['stages']:
+        assert 0 <= entry['start_seconds'] <= entry['end_seconds'] <= metrics['latency_seconds']
+        assert entry['seconds'] >= 0 and not entry['failed']
+
+
+def test_local_stage_failure_and_repeated_attempts_have_separate_spans():
+    @measure_request
+    def request():
+        for attempt in range(2):
+            try:
+                with tracked_stage('forecast_fit'):
+                    if attempt == 0:
+                        raise ValueError('retry')
+            except ValueError:
+                pass
+        return {}
+
+    spans = request()['metrics']['stages']
+    assert len(spans) == 2
+    assert [span['failed'] for span in spans] == [True, False]
+    assert spans[0]['end_seconds'] <= spans[1]['start_seconds']

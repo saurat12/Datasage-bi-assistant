@@ -1,17 +1,45 @@
 import json
 import re
+from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest
 
 from evaluation import (
-    ANSWER_CHECKS, SQL_CHECKS, build_evidence, check_statements,
+    ANSWER_CHECKS, ANSWER_EVALUATOR_PROMPT, SQL_CHECKS, build_evidence, check_statements,
     failed_verdict, parse_statements, parse_verdict,
     apply_answer_applicability,
     sql_review_rules,
     invoke_evaluator,
+    numbers,
 )
 from test_database_gateway import _pipeline_functions
+
+
+def test_answer_review_accepts_supported_window_total_without_monthly_listing():
+    assert 'forecast.target_total_scope answer the total' in ANSWER_EVALUATOR_PROMPT
+    assert 'do not require the narrative' in ANSWER_EVALUATOR_PROMPT
+    assert 'never return\npassed=false or revision issues while every check remains true' in ANSWER_EVALUATOR_PROMPT
+    assert 'observational breakdown alone' in ANSWER_EVALUATOR_PROMPT
+
+
+def test_negative_currency_amount_retains_sign_in_evidence_check():
+    assert numbers('Revenue changed by -$76,361.09.') == {Decimal('-76361.09')}
+    assert numbers('Revenue changed by $-76,361.09.') == {Decimal('-76361.09')}
+    rows = [{'revenue_change': -76361.09}]
+    statements = [{'text': 'Revenue changed by -$76,361.09.',
+                   'fact_ids': ['rows[0].revenue_change']}]
+    assert check_statements(statements, build_evidence(rows)) == []
+
+
+def test_cited_negative_change_supports_explicit_decrease_magnitude_only():
+    evidence = build_evidence([{'revenue_change': -76361.09}])
+    def issues(text):
+        return check_statements([{'text': text,
+                                  'fact_ids': ['rows[0].revenue_change']}], evidence)
+    assert issues('Revenue had a decrease of $76,361.09.') == []
+    assert issues('Revenue increased by $76,361.09.')
+    assert issues('Revenue had a decrease of $90,000.00.')
 
 
 def approved(checks=ANSWER_CHECKS):
@@ -38,6 +66,7 @@ def test_sql_reviewer_receives_only_applicable_rules():
     forecast = sql_review_rules(True)
     assert 'WHERE date/year filters explicitly requested' in historical
     assert 'LIMIT is optional' in historical
+    assert 'trend within one named year' in historical
     assert 'FORECAST HISTORY EXTRACTION' not in historical
     assert 'without LIMIT or future/recent-date filters' in forecast
     assert 'HISTORICAL ANALYSIS' not in forecast
@@ -293,6 +322,8 @@ def test_review_fallback_preserves_rows_without_ai_analysis():
     assert not result['evaluation']['passed']
     assert result['rows'] == [{'monthly_orders': 10}]
     assert 'Unverified claim' not in result['summary']
+    assert 'Open the Data tab' in result['summary']
+    assert 'below' not in result['summary']
     assert nodes['route_after_evaluation'](result) == 'end'
 
 
@@ -389,6 +420,7 @@ def test_summary_evidence_filters_fields_before_aggregation():
         'Dict': dict, 'Any': object, 'List': list,
         'settings': SimpleNamespace(summary_sample_rows=1, llm_column_allowlist={'revenue'}),
         'json': json, 'build_evidence': build_evidence, 'parse_statements': parse_statements,
+        '_attach_period_citations': lambda statements, evidence: statements,
         'SUMMARY_SYSTEM_PROMPT': '', 'STRUCTURED_SUMMARY_PROMPT': STRUCTURED_SUMMARY_PROMPT,
         'summary_llm': SimpleNamespace(invoke=lambda messages: (seen.append(messages) or SimpleNamespace(content=response))),
     })
@@ -465,6 +497,28 @@ def test_technical_retry_can_recover_without_summary_revision():
     assert final.get('evaluation_retry_count', 0) == 0
 
 
+def test_exact_grounded_trend_fallback_passes_deterministic_evidence_review():
+    nodes = answer_nodes(approved())
+    current = {**state(), 'question': 'Revenue trend in 2017?',
+               'rows': [{'period': '2017-01', 'revenue': 10}],
+               'critic_approved': True, 'summary_source': 'grounded_fallback'}
+    nodes['_safe_rows_for_llm'] = lambda rows, limit: rows[:limit]
+    nodes['_trend_summary_statements'] = lambda question, rows, evidence: current['summary_statements']
+    nodes['critic_llm'] = SimpleNamespace(invoke=lambda messages: (_ for _ in ()).throw(
+        AssertionError('Exact grounded fallback should not call the LLM reviewer')))
+
+    result = nodes['answer_evaluation_node'](current)
+
+    assert result['evaluation']['passed']
+    assert result['evaluation']['source'] == 'deterministic_trend_evidence'
+    assert result['summary'] == current['summary']
+
+    altered = {**current, 'summary': 'Different text.'}
+    rejected = nodes['answer_evaluation_node'](altered)
+    assert not rejected['evaluation']['passed']
+    assert rejected['evaluation'].get('source') != 'deterministic_trend_evidence'
+
+
 def test_invalid_evaluator_diagnostic_is_bounded_and_single_attempt():
     calls = []
     raw = 'invalid verdict ' + 'x' * 5000
@@ -473,3 +527,103 @@ def test_invalid_evaluator_diagnostic_is_bounded_and_single_attempt():
         invoke_evaluator(model, 'review', {}, ANSWER_CHECKS, {'summary_agent'}, max_attempts=1)
     assert len(calls) == 1
     assert len(str(exc.value)) < 2300
+
+
+def test_forecast_sql_review_rules_distinguish_history_aggregation_from_prediction():
+    rules = sql_review_rules(True, {'orders': {
+        'order_date': 'TEXT', 'region': 'TEXT', 'total_sales': 'REAL'}})
+    assert 'Grouping and aggregating observed rows' in rules
+    assert 'no WHERE date filter' in rules
+    assert 'Reject actual future filters' in rules
+    assert 'do not require an explicit past-date' in rules
+
+
+def test_sql_all_true_verdict_normalizes_false_passed_without_retry():
+    from evaluation import SQL_CHECKS
+
+    invalid = json.dumps({
+        'passed': False, 'checks': {key: True for key in SQL_CHECKS},
+        'requested_metric_column': 'total_sales', 'issues': [],
+        'retry_target': None, 'fix_instructions': '',
+    })
+    rejected = json.dumps({
+        'passed': False,
+        'checks': {key: key != 'aggregation_correct' for key in SQL_CHECKS},
+        'requested_metric_column': 'total_sales',
+        'issues': ['Wrong aggregation'], 'retry_target': 'sql_agent',
+        'fix_instructions': 'Use the requested aggregate.',
+    })
+    assert parse_verdict(invalid, SQL_CHECKS, {'sql_agent'})['passed'] is True
+    calls = []
+    model = SimpleNamespace(invoke=lambda messages: (
+        calls.append(messages) or SimpleNamespace(content=invalid)))
+    assert invoke_evaluator(model, 'Review', {'approved_schema': {'orders': {'total_sales': 'REAL'}}},
+                            SQL_CHECKS, {'sql_agent'})['passed'] is True
+    assert len(calls) == 1
+    assert parse_verdict(rejected, SQL_CHECKS, {'sql_agent'})['passed'] is False
+
+
+@pytest.mark.parametrize('extra', [
+    {'issues': ['A real defect']},
+    {'retry_target': 'sql_agent', 'fix_instructions': 'Fix the query.'},
+])
+def test_sql_normalization_does_not_hide_rejection_signals(extra):
+    verdict = approved(SQL_CHECKS)
+    verdict.update(passed=False, **extra)
+    with pytest.raises(ValueError, match='contradicts'):
+        parse_verdict(json.dumps(verdict), SQL_CHECKS, {'sql_agent'})
+
+
+@pytest.mark.parametrize(('sql', 'metric', 'review_rejects'), [
+    ("SELECT strftime('%Y-%m-01', order_date) AS period, region, "
+     "SUM(total_sales) AS total_sales FROM orders "
+     "GROUP BY period, region ORDER BY period, region", 'total_sales', False),
+    ("SELECT strftime('%Y-%m-01', order_date) AS period, region, "
+     "COUNT(DISTINCT order_id) AS orders FROM orders "
+     "GROUP BY period, region ORDER BY period, region", 'total_sales', False),
+    ("SELECT strftime('%Y-%m-01', order_date) AS period, "
+     "SUM(total_sales) AS total_sales FROM orders "
+     "GROUP BY period ORDER BY period", 'total_sales', False),
+    ("SELECT strftime('%Y-%m-01', order_date) AS period, region, "
+     "SUM(total_sales) AS total_sales FROM orders "
+     "WHERE order_date >= date('now') GROUP BY period, region", 'total_sales', False),
+    ("SELECT strftime('%Y-%m-01', order_date) AS period, region, "
+     "SUM(total_sales) AS total_sales FROM orders "
+     "WHERE region = 'East' GROUP BY period, region", 'total_sales', True),
+    ("SELECT strftime('%Y-%m-01', order_date) AS period, region, "
+     "SUM(total_sales) AS total_sales FROM orders "
+     "GROUP BY period, region", 'order_id', True),
+])
+def test_grouped_forecast_review_keeps_real_errors_blocked(sql, metric, review_rejects):
+    from test_database_gateway import _pipeline_functions
+    from evaluation import SQL_CHECKS, SQL_EVALUATOR_PROMPT, failed_verdict, sql_review_rules
+    from query_planning import metric_sql_issue
+    from sql_safety import looks_like_future_filter, split_statements
+
+    def review(*args, **kwargs):
+        if review_rejects:
+            verdict = failed_verdict(SQL_CHECKS, 'Incorrect filter or aggregation.', 'sql_agent')
+            verdict['requested_metric_column'] = metric
+            return verdict
+        return dict(passed=True, checks={key: True for key in SQL_CHECKS},
+                    issues=[], retry_target=None, fix_instructions='',
+                    requested_metric_column=metric)
+
+    nodes = _pipeline_functions({'critic_node'}, {
+        'metric_sql_issue': metric_sql_issue, 'SQL_EVALUATOR_PROMPT': SQL_EVALUATOR_PROMPT,
+        'sql_review_rules': sql_review_rules, 'SQL_CHECKS': SQL_CHECKS,
+        'failed_verdict': failed_verdict, '_split_statements': split_statements,
+        '_looks_like_future_filter': looks_like_future_filter,
+        're': re, 'json': json,
+        'APPROVED_SCHEMA': json.dumps({'orders': {
+            'order_date': 'TEXT', 'order_id': 'TEXT', 'region': 'TEXT',
+            'total_sales': 'REAL'}}),
+        'invoke_evaluator': review, 'critic_llm': object(),
+    })
+    verdict = nodes['critic_node']({
+        'question': 'Forecast sales by region for the next 3 months',
+        'sql': sql, 'forecast': True, 'group_col': 'region',
+    })
+    expected_pass = sql.startswith("SELECT strftime") and not review_rejects and (
+        'COUNT' not in sql and 'WHERE' not in sql and 'GROUP BY period, region' in sql)
+    assert verdict['critic_approved'] is expected_pass
